@@ -19,8 +19,8 @@ BEGIN {
 
 use Time::HiRes qw(time usleep);
 
-my $thread_count = 5;
-my $iterations = 1;
+my $thread_count = 200;
+my $iterations = 5000;
 my $max_result_length = 10000;
 
 # reset the locale environment

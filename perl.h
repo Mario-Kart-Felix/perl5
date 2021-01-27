@@ -922,6 +922,8 @@ Example usage:
 #   include <xlocale.h>
 #endif
 
+#  define NO_POSIX_2008_LOCALE  /*XXX */
+
 /* If not forbidden, we enable locale handling if either 1) the POSIX 2008
  * functions are available, or 2) just the setlocale() function.  This logic is
  * repeated in t/loc_tools.pl and makedef.pl;  The three should be kept in
@@ -6731,6 +6733,10 @@ the plain locale pragma without a parameter (S<C<use locale>>) is in effect.
                             freelocale(PL_C_locale_obj);                    \
                             PL_C_locale_obj = (locale_t) NULL;              \
                         }                                                   \
+                        /*if (PL_locale_mutex_depth > 0) {                    \
+                            MUTEX_UNLOCK(&PL_locale_mutex);                 \
+                        }                                                   \
+                        */\
                     } STMT_END
 #  else
 #    define LOCALE_TERM_POSIX_2008_  NOOP
@@ -6758,11 +6764,7 @@ the plain locale pragma without a parameter (S<C<use locale>>) is in effect.
     * platform isn't using thread-safe locales or any of the needed libc
     * functions doesn't have a reentrant version */
 #  if (  ! defined(USE_THREAD_SAFE_LOCALE)                              \
-       || (   defined(HAS_LOCALECONV)                                   \
-           && (  ! defined(HAS_LOCALECONV_L)                            \
-               ||  defined(TS_W32_BROKEN_LOCALECONV)))                  \
-       || (   defined(HAS_NL_LANGINFO)                                  \
-           && ! defined(HAS_THREAD_SAFE_NL_LANGINFO_L))                 \
+           /* Can get rid of these by changing our code to use base, except must toggle when emulating */\
        || (defined(HAS_MBLEN)  && ! defined(HAS_MBRLEN))                \
        || (defined(HAS_MBTOWC) && ! defined(HAS_MBRTOWC))               \
        || (defined(HAS_WCTOMB) && ! defined(HAS_WCRTOMB)))
@@ -6805,20 +6807,20 @@ the plain locale pragma without a parameter (S<C<use locale>>) is in effect.
       * section.  The categories (except LC_NUMERIC) can be defined in terms of
       * this macro.
       * */
-#      define LC_foo_base_LOCK_(cat, querylocale, changelocale)             \
+#      define LC_foo_base_LOCK_(cat, query_fcn, change_fcn)                 \
         STMT_START {                                                        \
             const char * actual;                                            \
             const char * wanted;                                            \
             dTHX;                                                           \
                                                                             \
             LOCALE_LOCK_;                                                   \
-            actual = querylocale(LC_##cat, NULL);                           \
+            actual = query_fcn(LC_##cat, NULL);                             \
             wanted = PL_curlocales[LC_##cat##_INDEX_];                      \
             DEBUG_Lv(PerlIO_printf(Perl_debug_log,                          \
                      "%s: %d: actual=%s, wanted=%s\n",                      \
                      __FILE__,  __LINE__, actual, wanted));                 \
             if (strNE(actual, wanted)) {                                    \
-                changelocale(LC_##cat, wanted);                             \
+                change_fcn(LC_##cat, wanted);                               \
             }                                                               \
         } STMT_END
 
@@ -7119,6 +7121,7 @@ cannot have changed since the precalculation.
                     (! PL_numeric_underlying && PL_numeric_standard < 2)
 
 #  define DECLARATION_FOR_LC_NUMERIC_MANIPULATION                           \
+    /* XXX note can remove #ifdefs around this */\
     void (*_restore_LC_NUMERIC_function)(pTHX) = NULL
 
 #  define STORE_LC_NUMERIC_SET_TO_NEEDED_IN(in)                             \
@@ -7252,29 +7255,6 @@ cannot have changed since the precalculation.
     STMT_START { block; } STMT_END
 
 #endif /* !USE_LOCALE_NUMERIC */
-
-#define DECLARATION_FOR_LOCALECONV_LOCK                                     \
-                                    DECLARATION_FOR_LC_NUMERIC_MANIPULATION
-
-/* Locking for localeconv() is a bit complicated.  It is sensitive to both
- * LC_NUMERIC and LC_MONETARY, so both have to be forced to their underlying
- * values, if necessary.  On some platforms, both will be no-ops, but the
- * function still needs to be locked because other threads share its buffer.
- * Rather than #ifdef all the combinations here, we just do all three, relying
- * on the mutex being recursive, and the ones that arent needed for the
- * platform (perhaps all three on an unthreaded system) will just be no-ops */
-#define LOCALECONV_LOCK                                                     \
-            STMT_START {                                                    \
-                STORE_LC_NUMERIC_FORCE_TO_UNDERLYING();                     \
-                LC_MONETARY_LOCK;                                           \
-                LOCALE_BASE_LOCK_(0);                                       \
-            } STMT_END
-#define LOCALECONV_UNLOCK                                                   \
-            STMT_START {                                                    \
-                LOCALE_BASE_UNLOCK_;                                        \
-                LC_MONETARY_UNLOCK;                                         \
-                RESTORE_LC_NUMERIC();                                       \
-            } STMT_END
 
 #ifdef USE_ITHREADS
 #  define ENV_LOCK            PERL_WRITE_LOCK(&PL_env_mutex)

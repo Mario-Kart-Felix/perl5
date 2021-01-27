@@ -370,7 +370,6 @@ PERLVAR(I, in_utf8_turkic_locale, bool)
 #if defined(USE_LOCALE_THREADS)
 PERLVARI(I, locale_mutex_depth, int, 0)   /* Emulate general semaphore */
 #endif
-PERLVARA(I, locale_utf8ness, 256, char)
 
 #ifdef USE_LOCALE_CTYPE
     PERLVAR(I, warn_locale, SV *)
@@ -740,9 +739,9 @@ PERLVARI(I, collation_standard, bool, TRUE)
                                         /* Assume simple collation */
 #endif /* USE_LOCALE_COLLATE */
 
-PERLVARI(I, langinfo_buf, char *, NULL)
+PERLVARI(I, langinfo_buf, const char *, NULL)
 PERLVARI(I, langinfo_bufsize, Size_t, 0)
-PERLVARI(I, setlocale_buf, char *, NULL)
+PERLVARI(I, setlocale_buf, const char *, NULL)
 PERLVARI(I, setlocale_bufsize, Size_t, 0)
 
 #ifdef PERL_SAWAMPERSAND

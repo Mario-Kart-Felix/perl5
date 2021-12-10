@@ -1044,11 +1044,7 @@ Perl_magic_get(pTHX_ SV *sv, MAGIC *mg)
         if (strEQ(remaining, "AST_FH")) {
             if (PL_last_in_gv && (SV*)PL_last_in_gv != &PL_sv_undef) {
                 assert(isGV_with_GP(PL_last_in_gv));
-                SV_CHECK_THINKFIRST_COW_DROP(sv);
-                prepare_SV_for_RV(sv);
-                SvOK_off(sv);
-                SvRV_set(sv, SvREFCNT_inc_simple_NN(PL_last_in_gv));
-                SvROK_on(sv);
+                sv_setrv_inc(sv, MUTABLE_SV(PL_last_in_gv));
                 sv_rvweaken(sv);
             }
             else
@@ -1240,7 +1236,13 @@ Perl_magic_get(pTHX_ SV *sv, MAGIC *mg)
                 Safefree(gary);
             }
         }
-        (void)SvIOK_on(sv);	/* what a wonderful hack! */
+
+        /*
+            Set this to avoid warnings when the SV is used as a number.
+            Avoid setting the public IOK flag so that serializers will
+            use the PV.
+        */
+        (void)SvIOKp_on(sv);	/* what a wonderful hack! */
 #endif
         break;
     case '0':
@@ -1269,8 +1271,23 @@ int
 Perl_magic_setenv(pTHX_ SV *sv, MAGIC *mg)
 {
     STRLEN len = 0, klen;
-    const char * const key = MgPV_const(mg,klen);
+
+    const char *key;
     const char *s = "";
+
+    SV *keysv = MgSV(mg);
+
+    if (keysv == NULL) {
+        key = mg->mg_ptr;
+        klen = mg->mg_len;
+    }
+    else {
+        if (!sv_utf8_downgrade(keysv, /* fail_ok */ TRUE)) {
+            Perl_ck_warner_d(aTHX_ packWARN(WARN_UTF8), "Wide character in %s", "setenv key (encoding to utf8)");
+        }
+
+        key = SvPV_const(keysv,klen);
+    }
 
     PERL_ARGS_ASSERT_MAGIC_SETENV;
 
@@ -1299,7 +1316,7 @@ Perl_magic_setenv(pTHX_ SV *sv, MAGIC *mg)
     }
 #endif
 
-#if !defined(OS2) && !defined(WIN32) && !defined(MSDOS)
+#if !defined(OS2) && !defined(WIN32)
                             /* And you'll never guess what the dog had */
                             /*   in its mouth... */
     if (TAINTING_get) {
@@ -1364,7 +1381,7 @@ Perl_magic_setenv(pTHX_ SV *sv, MAGIC *mg)
             }
         }
     }
-#endif /* neither OS2 nor WIN32 nor MSDOS */
+#endif /* neither OS2 nor WIN32 */
 
     return 0;
 }
@@ -1538,6 +1555,9 @@ Perl_csighandler3(int sig, Siginfo_t *sip PERL_UNUSED_DECL, void *uap PERL_UNUSE
 #endif
 #ifdef SIGSEGV
            sig == SIGSEGV ||
+#endif
+#ifdef SIGFPE
+           sig == SIGFPE ||
 #endif
            (PL_signals & PERL_SIGNALS_UNSAFE_FLAG))
         /* Call the perl level handler now--
@@ -1810,6 +1830,24 @@ Perl_magic_setsig(pTHX_ SV *sv, MAGIC *mg)
     return 0;
 }
 #endif /* !PERL_MICRO */
+
+int
+Perl_magic_setsigall(pTHX_ SV* sv, MAGIC* mg)
+{
+    PERL_ARGS_ASSERT_MAGIC_SETSIGALL;
+    PERL_UNUSED_ARG(mg);
+
+    if (PL_localizing == 2) {
+        HV* hv = (HV*)sv;
+        HE* current;
+        hv_iterinit(hv);
+        while ((current = hv_iternext(hv))) {
+            SV* sigelem = hv_iterval(hv, current);
+            mg_set(sigelem);
+        }
+    }
+    return 0;
+}
 
 int
 Perl_magic_setisa(pTHX_ SV *sv, MAGIC *mg)
@@ -2600,11 +2638,10 @@ Perl_magic_freemglob(pTHX_ SV *sv, MAGIC *mg)
     PERL_ARGS_ASSERT_MAGIC_FREEMGLOB;
     PERL_UNUSED_ARG(sv);
 
-    /* glob magic uses mg_len as a string length rather than a buffer
-     * length, so we need to free even with mg_len == 0: hence we can't
-     * rely on standard magic free handling */
+    /* pos() magic uses mg_len as a string position rather than a buffer
+     * length, and mg_ptr is currently unused, so skip freeing.
+     */
     assert(mg->mg_type == PERL_MAGIC_regex_global && mg->mg_len >= -1);
-    Safefree(mg->mg_ptr);
     mg->mg_ptr = NULL;
     return 0;
 }
@@ -2852,7 +2889,7 @@ Perl_magic_set(pTHX_ SV *sv, MAGIC *mg)
         paren = mg->mg_len;
         if (PL_curpm && (rx = PM_GETRE(PL_curpm))) {
           setparen_got_rx:
-            CALLREG_NUMBUF_STORE((REGEXP * const)rx,paren,sv);
+            CALLREG_NUMBUF_STORE((REGEXP *)rx,paren,sv);
         } else {
             /* Croak with a READONLY error when a numbered match var is
              * set without a previous pattern match. Unless it's C<local $1>

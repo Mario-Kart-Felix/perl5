@@ -75,7 +75,7 @@ typedef union {
     U8 bytes[sizeof(NV)];
 } NV_bytes;
 
-#if defined(HAS_LONG_DOUBLE) && defined(USE_LONG_DOUBLE)
+#if defined(HAS_LONG_DOUBLE)
 typedef union {
     long double ld;
     U8 bytes[sizeof(long double)];
@@ -223,7 +223,7 @@ S_mul128(pTHX_ SV *sv, U8 m)
 #define TYPE_IS_PACK		0x800
 #define TYPE_ENDIANNESS_MASK	(TYPE_IS_BIG_ENDIAN|TYPE_IS_LITTLE_ENDIAN)
 #define TYPE_MODIFIERS(t)	((t) & ~0xFF)
-#define TYPE_NO_MODIFIERS(t)	((t) & 0xFF)
+#define TYPE_NO_MODIFIERS(t)	((U8) (t))
 
 # define TYPE_ENDIANNESS(t)	((t) & TYPE_ENDIANNESS_MASK)
 # define TYPE_NO_ENDIANNESS(t)	((t) & ~TYPE_ENDIANNESS_MASK)
@@ -263,7 +263,7 @@ utf8_to_byte(pTHX_ const char **s, const char *end, I32 datumtype)
         Perl_ck_warner(aTHX_ packWARN(WARN_UNPACK),
                        "Character in '%c' format wrapped in unpack",
                        (int) TYPE_NO_MODIFIERS(datumtype));
-        val &= 0xff;
+        val = (U8) val;
     }
     *s += retlen;
     return (U8)val;
@@ -296,7 +296,7 @@ S_utf8_to_bytes(pTHX_ const char **s, const char *end, const char *buf, SSize_t 
         } else from += retlen;
         if (val >= 0x100) {
             bad |= 2;
-            val &= 0xff;
+            val = (U8) val;
         }
         if (UNLIKELY(needs_swap))
             *(U8 *)--buf = (U8)val;
@@ -453,6 +453,7 @@ S_measure_struct(pTHX_ tempsym_t* symptr)
             /* endianness doesn't influence the size of a type */
             switch(TYPE_NO_ENDIANNESS(symptr->code)) {
             default:
+                /* diag_listed_as: Invalid type '%s' in %s */
                 Perl_croak(aTHX_ "Invalid type '%c' in %s",
                            (int)TYPE_NO_MODIFIERS(symptr->code),
                            _action( symptr ) );
@@ -608,12 +609,15 @@ S_next_symbol(pTHX_ tempsym_t* symptr )
         patptr++;
     } else {
       /* We should have found a template code */
-      I32 code = *patptr++ & 0xFF;
+      I32 code = (U8) *patptr++;
       U32 inherited_modifiers = 0;
 
-      if (code == ','){ /* grandfather in commas but with a warning */
+      /* unrecognised characters in pack/unpack formats were made fatal in
+       * 5.004, with an exception added in 5.004_04 for ',' to "just" warn: */
+      if (code == ','){
         if (((symptr->flags & FLAG_COMMA) == 0) && ckWARN(WARN_UNPACK)){
           symptr->flags |= FLAG_COMMA;
+          /* diag_listed_as: Invalid type '%s' in %s */
           Perl_warner(aTHX_ packWARN(WARN_UNPACK),
                       "Invalid type ',' in %s", _action( symptr ) );
         }
@@ -916,6 +920,7 @@ S_unpack_rec(pTHX_ tempsym_t* symptr, const char *s, const char *strbeg, const c
 
         switch(TYPE_NO_ENDIANNESS(datumtype)) {
         default:
+            /* diag_listed_as: Invalid type '%s' in %s */
             Perl_croak(aTHX_ "Invalid type '%c' in unpack", (int)TYPE_NO_MODIFIERS(datumtype) );
 
         case '%':
@@ -1696,7 +1701,7 @@ S_unpack_rec(pTHX_ tempsym_t* symptr, const char *s, const char *strbeg, const c
                     cdouble += anv.nv;
             }
             break;
-#if defined(HAS_LONG_DOUBLE) && defined(USE_LONG_DOUBLE)
+#if defined(HAS_LONG_DOUBLE)
         case 'D':
             while (len-- > 0) {
                 ld_bytes aldouble;
@@ -2185,6 +2190,7 @@ S_pack_rec(pTHX_ SV *cat, tempsym_t* symptr, SV **beglist, SV **endlist )
            doesn't simply leave using break */
         switch (TYPE_NO_ENDIANNESS(datumtype)) {
         default:
+            /* diag_listed_as: Invalid type '%s' in %s */
             Perl_croak(aTHX_ "Invalid type '%c' in pack",
                        (int) TYPE_NO_MODIFIERS(datumtype));
         case '%':
@@ -2573,7 +2579,7 @@ S_pack_rec(pTHX_ SV *cat, tempsym_t* symptr, SV **beglist, SV **endlist )
                 if ((-128 > aiv || aiv > 127))
                     Perl_ck_warner(aTHX_ packWARN(WARN_PACK),
                                    "Character in 'c' format wrapped in pack");
-                PUSH_BYTE(utf8, cur, (U8)(aiv & 0xff));
+                PUSH_BYTE(utf8, cur, (U8)aiv);
             }
             break;
         case 'C':
@@ -2588,7 +2594,7 @@ S_pack_rec(pTHX_ SV *cat, tempsym_t* symptr, SV **beglist, SV **endlist )
                 if ((0 > aiv || aiv > 0xff))
                     Perl_ck_warner(aTHX_ packWARN(WARN_PACK),
                                    "Character in 'C' format wrapped in pack");
-                PUSH_BYTE(utf8, cur, (U8)(aiv & 0xff));
+                PUSH_BYTE(utf8, cur, (U8)aiv);
             }
             break;
         case 'W': {
@@ -2628,7 +2634,7 @@ S_pack_rec(pTHX_ SV *cat, tempsym_t* symptr, SV **beglist, SV **endlist )
                         }
                         Perl_ck_warner(aTHX_ packWARN(WARN_PACK),
                                        "Character in 'W' format wrapped in pack");
-                        auv &= 0xff;
+                        auv = (U8) auv;
                     }
                     if (cur >= end) {
                         *cur = '\0';
@@ -2759,7 +2765,7 @@ S_pack_rec(pTHX_ SV *cat, tempsym_t* symptr, SV **beglist, SV **endlist )
             }
             break;
         }
-#if defined(HAS_LONG_DOUBLE) && defined(USE_LONG_DOUBLE)
+#if defined(HAS_LONG_DOUBLE)
         case 'D': {
             ld_bytes aldouble;
             /* long doubles can have unused bits, which may be nonzero */

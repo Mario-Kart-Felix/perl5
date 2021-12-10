@@ -1513,7 +1513,7 @@ S_mess_alloc(pTHX)
     return sv;
 }
 
-#if defined(PERL_IMPLICIT_CONTEXT)
+#if defined(MULTIPLICITY)
 char *
 Perl_form_nocontext(const char* pat, ...)
 {
@@ -1526,7 +1526,7 @@ Perl_form_nocontext(const char* pat, ...)
     va_end(args);
     return retval;
 }
-#endif /* PERL_IMPLICIT_CONTEXT */
+#endif /* MULTIPLICITY */
 
 /*
 =for apidoc_section $display
@@ -1542,9 +1542,9 @@ can be used any place a string (char *) is required:
 
     char * s = Perl_form("%d.%d",major,minor);
 
-They use a single private buffer so if you want to format several strings you
-must explicitly copy the earlier strings away (and free the copies when you
-are done).
+They use a single (per-thread) private buffer so if you want to format several
+strings you must explicitly copy the earlier strings away (and free the copies
+when you are done).
 
 The two forms differ only in that C<form_nocontext> does not take a thread
 context (C<aTHX>) parameter, so is used in situations where the caller doesn't
@@ -1597,7 +1597,7 @@ already have the thread context.
 =cut
 */
 
-#if defined(PERL_IMPLICIT_CONTEXT)
+#if defined(MULTIPLICITY)
 SV *
 Perl_mess_nocontext(const char *pat, ...)
 {
@@ -1610,7 +1610,7 @@ Perl_mess_nocontext(const char *pat, ...)
     va_end(args);
     return retval;
 }
-#endif /* PERL_IMPLICIT_CONTEXT */
+#endif /* MULTIPLICITY */
 
 SV *
 Perl_mess(pTHX_ const char *pat, ...)
@@ -1915,7 +1915,7 @@ The function never actually returns.
 =cut
 */
 
-#if defined(PERL_IMPLICIT_CONTEXT)
+#if defined(MULTIPLICITY)
 
 /* silence __declspec(noreturn) warnings */
 MSVC_DIAG_IGNORE(4646 4645)
@@ -1932,7 +1932,7 @@ Perl_die_nocontext(const char* pat, ...)
 }
 MSVC_DIAG_RESTORE
 
-#endif /* PERL_IMPLICIT_CONTEXT */
+#endif /* MULTIPLICITY */
 
 /* silence __declspec(noreturn) warnings */
 MSVC_DIAG_IGNORE(4646 4645)
@@ -2041,7 +2041,7 @@ when you are about to throw an exception.
 =cut
 */
 
-#if defined(PERL_IMPLICIT_CONTEXT)
+#if defined(MULTIPLICITY)
 void
 Perl_croak_nocontext(const char *pat, ...)
 {
@@ -2052,7 +2052,7 @@ Perl_croak_nocontext(const char *pat, ...)
     NOT_REACHED; /* NOTREACHED */
     va_end(args);
 }
-#endif /* PERL_IMPLICIT_CONTEXT */
+#endif /* MULTIPLICITY */
 
 /* saves machine code for a common noreturn idiom typically used in Newx*() */
 GCC_DIAG_IGNORE_DECL(-Wunused-function);
@@ -2192,7 +2192,7 @@ already have the thread context.
 =cut
 */
 
-#if defined(PERL_IMPLICIT_CONTEXT)
+#if defined(MULTIPLICITY)
 void
 Perl_warn_nocontext(const char *pat, ...)
 {
@@ -2203,7 +2203,7 @@ Perl_warn_nocontext(const char *pat, ...)
     vwarn(pat, &args);
     va_end(args);
 }
-#endif /* PERL_IMPLICIT_CONTEXT */
+#endif /* MULTIPLICITY */
 
 void
 Perl_warn(pTHX_ const char *pat, ...)
@@ -2264,7 +2264,7 @@ This is like C<L</warner>>, but C<args> are an encapsulated argument list.
 =cut
 */
 
-#if defined(PERL_IMPLICIT_CONTEXT)
+#if defined(MULTIPLICITY)
 void
 Perl_warner_nocontext(U32 err, const char *pat, ...)
 {
@@ -2275,7 +2275,7 @@ Perl_warner_nocontext(U32 err, const char *pat, ...)
     vwarner(err, pat, &args);
     va_end(args);
 }
-#endif /* PERL_IMPLICIT_CONTEXT */
+#endif /* MULTIPLICITY */
 
 void
 Perl_ck_warner_d(pTHX_ U32 err, const char* pat, ...)
@@ -2466,7 +2466,7 @@ S_env_alloc(void *current, Size_t l1, Size_t l2, Size_t l3, Size_t size)
 #  endif
 
 
-#  if !defined(WIN32) && !defined(NETWARE)
+#  if !defined(WIN32)
 
 /*
 =for apidoc_section $utility
@@ -2606,7 +2606,7 @@ my_setenv_out:
 #    endif
 }
 
-#  else /* WIN32 || NETWARE */
+#  else /* WIN32 */
 
 void
 Perl_my_setenv(pTHX_ const char *nam, const char *val)
@@ -2625,7 +2625,7 @@ Perl_my_setenv(pTHX_ const char *nam, const char *val)
     safesysfree(envstr);
 }
 
-#  endif /* WIN32 || NETWARE */
+#  endif /* WIN32 */
 
 #endif /* USE_ENVIRON_ARRAY */
 
@@ -2649,7 +2649,7 @@ Perl_unlnk(pTHX_ const char *f)	/* unlink all versions of a file */
 PerlIO *
 Perl_my_popen_list(pTHX_ const char *mode, int n, SV **args)
 {
-#if (!defined(DOSISH) || defined(HAS_FORK)) && !defined(OS2) && !defined(VMS) && !defined(NETWARE) && !defined(__LIBCATAMOUNT__) && !defined(__amigaos4__)
+#if (!defined(DOSISH) || defined(HAS_FORK)) && !defined(OS2) && !defined(VMS) && !defined(__LIBCATAMOUNT__) && !defined(__amigaos4__)
     int p[2];
     I32 This, that;
     Pid_t pid;
@@ -2922,18 +2922,6 @@ Perl_my_popen(pTHX_ const char *cmd, const char *mode)
     if (did_pipes)
          PerlLIO_close(pp[0]);
     return PerlIO_fdopen(p[This], mode);
-}
-#elif defined(DJGPP)
-FILE *djgpp_popen();
-PerlIO *
-Perl_my_popen(pTHX_ const char *cmd, const char *mode)
-{
-    PERL_FLUSHALL_FOR_CHILD;
-    /* Call system's popen() to get a FILE *, then import it.
-       used 0 for 2nd parameter to PerlIO_importFILE;
-       apparently not used
-    */
-    return PerlIO_importFILE(djgpp_popen(cmd, mode), 0);
 }
 #elif defined(__LIBCATAMOUNT__)
 PerlIO *
@@ -3210,7 +3198,7 @@ Perl_rsignal_restore(pTHX_ int signo, Sigsave_t *save)
 #endif /* !HAS_SIGACTION */
 #endif /* !PERL_MICRO */
 
-    /* VMS' my_pclose() is in VMS.c; same with OS/2 */
+    /* VMS' my_pclose() is in VMS.c */
 #if (!defined(DOSISH) || defined(HAS_FORK)) && !defined(VMS) && !defined(__LIBCATAMOUNT__) && !defined(__amigaos4__)
 I32
 Perl_my_pclose(pTHX_ PerlIO *ptr)
@@ -3224,10 +3212,14 @@ Perl_my_pclose(pTHX_ PerlIO *ptr)
     const int fd = PerlIO_fileno(ptr);
     bool should_wait;
 
-    svp = av_fetch(PL_fdpid,fd,TRUE);
-    pid = (SvTYPE(*svp) == SVt_IV) ? SvIVX(*svp) : -1;
-    SvREFCNT_dec(*svp);
-    *svp = NULL;
+    svp = av_fetch(PL_fdpid, fd, FALSE);
+    if (svp) {
+        pid = (SvTYPE(*svp) == SVt_IV) ? SvIVX(*svp) : -1;
+        SvREFCNT_dec(*svp);
+        *svp = NULL;
+    } else {
+        pid = -1;
+    }
 
 #if defined(USE_PERLIO)
     /* Find out whether the refcount is low enough for us to wait for the
@@ -3238,7 +3230,7 @@ Perl_my_pclose(pTHX_ PerlIO *ptr)
 #endif
 
 #ifdef OS2
-    if (pid == -1) {			/* Opened by popen. */
+    if (pid == -2) {                    /* Opened by popen. */
         return my_syspclose(ptr);
     }
 #endif
@@ -3265,7 +3257,7 @@ Perl_my_pclose(pTHX_ PerlIO *ptr)
 }
 #endif /* !DOSISH */
 
-#if  (!defined(DOSISH) || defined(OS2) || defined(WIN32) || defined(NETWARE)) && !defined(__LIBCATAMOUNT__)
+#if  (!defined(DOSISH) || defined(OS2) || defined(WIN32)) && !defined(__LIBCATAMOUNT__)
 I32
 Perl_wait4pid(pTHX_ Pid_t pid, int *statusp, int flags)
 {
@@ -3354,7 +3346,7 @@ Perl_wait4pid(pTHX_ Pid_t pid, int *statusp, int flags)
     }
     return result;
 }
-#endif /* !DOSISH || OS2 || WIN32 || NETWARE */
+#endif /* !DOSISH || OS2 || WIN32 */
 
 #ifdef PERL_USES_PL_PIDSTATUS
 void
@@ -3383,20 +3375,6 @@ Perl_my_pclose(pTHX_ PerlIO *ptr)
     /* Needs work for PerlIO ! */
     FILE * const f = PerlIO_findFILE(ptr);
     const I32 result = pclose(f);
-    PerlIO_releaseFILE(ptr,f);
-    return result;
-}
-#endif
-
-#if defined(DJGPP)
-int djgpp_pclose();
-I32
-Perl_my_pclose(pTHX_ PerlIO *ptr)
-{
-    /* Needs work for PerlIO ! */
-    FILE * const f = PerlIO_findFILE(ptr);
-    I32 result = djgpp_pclose(f);
-    result = (result << 8) & 0xff00;
     PerlIO_releaseFILE(ptr,f);
     return result;
 }
@@ -4215,20 +4193,22 @@ giving localized results.
   Newx(buf, buflen, char);
 
   GCC_DIAG_IGNORE_STMT(-Wformat-nonliteral); /* fmt checked by caller */
+
   len = strftime(buf, buflen, fmt, &mytm);
+
   GCC_DIAG_RESTORE_STMT;
 
   /*
-  ** The following is needed to handle to the situation where
+  ** The following is needed to handle the situation where
   ** tmpbuf overflows.  Basically we want to allocate a buffer
-  ** and try repeatedly.  The reason why it is so complicated
-  ** is that getting a return value of 0 from strftime can indicate
-  ** one of the following:
+  ** and try repeatedly, until it's large enough.  The reason why it is so
+  ** complicated ** is that getting a return value of 0 from strftime can
+  ** indicate one of the following:
   ** 1. buffer overflowed,
   ** 2. illegal conversion specifier, or
-  ** 3. the format string specifies nothing to be returned(not
-  **	  an error).  This could be because format is an empty string
-  **    or it specifies %p that yields an empty string in some locale.
+  ** 3. the format string specifies nothing to be returned (which isn't an
+  **    an error).  This could be because the format is an empty string
+  **    or it specifies %p which yields an empty string in some locales.
   ** If there is a better way to make it portable, go ahead by
   ** all means.
   */
@@ -4250,8 +4230,19 @@ giving localized results.
         break;
       /* heuristic to prevent out-of-memory errors */
       if (bufsize > 100*fmtlen) {
-        Safefree(buf);
-        buf = NULL;
+
+        /* "%p" can legally return nothing, assume that was the case if we
+         * can't make the buffer large enough to get a non-zero return.  For
+         * any other formats, assume it is an error (probably it is an illegal
+         * conversion specifier.) */
+        if (strEQ(fmt, "%p")) {
+            Renew(buf, 1, char);
+            *buf = '\0';
+        }
+        else {
+            Safefree(buf);
+            buf = NULL;
+        }
         break;
       }
       bufsize *= 2;
@@ -5470,7 +5461,7 @@ Perl_my_clearenv(pTHX)
 #endif /* PERL_MICRO */
 }
 
-#ifdef PERL_IMPLICIT_CONTEXT
+#ifdef MULTIPLICITY
 
 
 /* Implements the MY_CXT_INIT macro. The first time a module is loaded,
@@ -5525,7 +5516,7 @@ Perl_my_cxt_init(pTHX_ int *indexp, size_t size)
     return p;
 }
 
-#endif /* PERL_IMPLICIT_CONTEXT */
+#endif /* MULTIPLICITY */
 
 
 /* Perl_xs_handshake():
@@ -5571,7 +5562,8 @@ Perl_xs_handshake(const U32 key, void * v_my_perl, const char * file, ...)
     U32 items, ax;
     void * got;
     void * need;
-#ifdef PERL_IMPLICIT_CONTEXT
+    const char *stage = "first";
+#ifdef MULTIPLICITY
     dTHX;
     tTHX xs_interp;
 #else
@@ -5590,7 +5582,7 @@ Perl_xs_handshake(const U32 key, void * v_my_perl, const char * file, ...)
    2nd threaded perl interp DLL never initialized its TLS/PERL_SYS_INIT3 so
    dTHX call from 2nd interp DLL can't return the my_perl that pp_entersub
    passed to the XS DLL */
-#ifdef PERL_IMPLICIT_CONTEXT
+#ifdef MULTIPLICITY
     xs_interp = (tTHX)v_my_perl;
     got = xs_interp;
     need = my_perl;
@@ -5607,12 +5599,13 @@ Perl_xs_handshake(const U32 key, void * v_my_perl, const char * file, ...)
     got = xs_spp;
     need = &PL_stack_sp;
 #endif
+    stage = "second";
     if(UNLIKELY(got != need)) {
         bad_handshake:/* recycle branch and string from above */
         if(got != (void *)HSf_NOCHK)
             noperl_die("%s: loadable library and perl binaries are mismatched"
-                       " (got handshake key %p, needed %p)\n",
-                file, got, need);
+                       " (got %s handshake key %p, needed %p)\n",
+                       file, stage, got, need);
     }
 
     if(key & HSf_SETXSUBFN) {     /* this might be called from a module bootstrap */

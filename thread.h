@@ -16,8 +16,6 @@
 
 #ifdef WIN32
 #  include <win32thread.h>
-#elif defined(NETWARE)
-#  include <nw5thread.h>
 #else
 #  ifdef OLD_PTHREADS_API /* Here be dragons. */
 #    define DETACH(t) \
@@ -34,11 +32,6 @@
 #    define PERL_SET_CONTEXT(t)	Perl_set_context((void*)t)
 
 #    define PTHREAD_GETSPECIFIC_INT
-#    ifdef DJGPP
-#      define pthread_addr_t any_t
-#      define NEED_PTHREAD_INIT
-#      define PTHREAD_CREATE_JOINABLE (1)
-#    endif
 #    ifdef OEMVS
 #      define pthread_addr_t void *
 #      define pthread_create(t,a,s,d)        pthread_create(t,&(a),s,d)
@@ -61,7 +54,7 @@
 #      define pthread_mutexattr_init(a) pthread_mutexattr_create(a)
 #      define pthread_mutexattr_settype(a,t) pthread_mutexattr_setkind_np(a,t)
 #    endif
-#    if defined(DJGPP) || defined(OEMVS)
+#    if defined(OEMVS)
 #      define PTHREAD_ATTR_SETDETACHSTATE(a,s) pthread_attr_setdetachstate(a,&(s))
 #      define YIELD pthread_yield(NULL)
 #    endif
@@ -379,19 +372,39 @@
 #    define PTHREAD_GETSPECIFIC(key) pthread_getspecific(key)
 #endif
 
-#ifndef PERL_GET_CONTEXT
-#  define PERL_GET_CONTEXT	PTHREAD_GETSPECIFIC(PL_thr_key)
-#endif
+#if defined(PERL_THREAD_LOCAL) && !defined(PERL_GET_CONTEXT) && !defined(PERL_SET_CONTEXT)
+/* Use C11 thread-local storage, where possible: */
+#  define PERL_USE_THREAD_LOCAL
+extern PERL_THREAD_LOCAL void *PL_current_context;
 
-#ifndef PERL_SET_CONTEXT
-#  define PERL_SET_CONTEXT(t) \
+#  define PERL_GET_CONTEXT        PL_current_context
+
+/* Set our thread-specific value anyway, in case code is reading it directly. */
+#  define PERL_SET_CONTEXT(t)                                           \
+    STMT_START {                                                        \
+        int _eC_;                                                       \
+        if ((_eC_ = pthread_setspecific(PL_thr_key, PL_current_context = (void *)(t)))) \
+            Perl_croak_nocontext("panic: pthread_setspecific (%d) [%s:%d]", \
+                                 _eC_, __FILE__, __LINE__);             \
+    } STMT_END
+
+#else
+/* else fall back to pthreads */
+
+#  ifndef PERL_GET_CONTEXT
+#    define PERL_GET_CONTEXT	PTHREAD_GETSPECIFIC(PL_thr_key)
+#  endif
+
+#  ifndef PERL_SET_CONTEXT
+#    define PERL_SET_CONTEXT(t) \
     STMT_START {						\
         int _eC_;						\
         if ((_eC_ = pthread_setspecific(PL_thr_key, (void *)(t))))	\
             Perl_croak_nocontext("panic: pthread_setspecific (%d) [%s:%d]",	\
                                  _eC_, __FILE__, __LINE__);	\
     } STMT_END
-#endif /* PERL_SET_CONTEXT */
+#  endif /* PERL_SET_CONTEXT */
+#endif /* PERL_THREAD_LOCAL */
 
 #ifndef INIT_THREADS
 #  ifdef NEED_PTHREAD_INIT

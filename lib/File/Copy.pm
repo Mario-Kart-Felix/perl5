@@ -24,7 +24,7 @@ sub syscopy;
 sub cp;
 sub mv;
 
-$VERSION = '2.35';
+$VERSION = '2.37';
 
 require Exporter;
 @ISA = qw(Exporter);
@@ -104,7 +104,7 @@ sub copy {
 	my @fs = stat($from);
 	if (@fs) {
 	    my @ts = stat($to);
-	    if (@ts && $fs[0] == $ts[0] && $fs[1] == $ts[1] && !-p $from) {
+	    if (@ts && $fs[0] == $ts[0] && $fs[1] eq $ts[1] && !-p $from) {
 		carp("'$from' and '$to' are identical (not copied)");
                 return 0;
 	    }
@@ -119,7 +119,6 @@ sub copy {
 	&& !$to_a_handle
 	&& !($from_a_handle && $^O eq 'os2' )	# OS/2 cannot handle handles
 	&& !($from_a_handle && $^O eq 'MSWin32')
-	&& !($from_a_handle && $^O eq 'NetWare')
        )
     {
         if ($^O eq 'VMS' && -e $from

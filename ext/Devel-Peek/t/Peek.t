@@ -15,7 +15,10 @@ BEGIN {
 
 use Test::More;
 
-use Devel::Peek;
+BEGIN {
+    use_ok 'Devel::Peek';
+}
+require Tie::Hash;
 
 our $DEBUG = 0;
 open(SAVERR, ">&STDERR") or die "Can't dup STDERR: $!";
@@ -95,6 +98,11 @@ sub do_test {
 		if $Config{ccflags} =~
 			/-DPERL_(?:OLD_COPY_ON_WRITE|NO_COW)\b/
 			    || $] < 5.019003;
+            if ($Config::Config{ccflags} =~ /-DNODEFAULT_SHAREKEYS\b/) {
+                $pattern =~ s/,SHAREKEYS\b//g;
+                $pattern =~ s/\bSHAREKEYS,//g;
+                $pattern =~ s/\bSHAREKEYS\b//g;
+            }
 	    print $pattern, "\n" if $DEBUG;
 	    my ($dump, $dump2) = split m/\*\*\*\*\*\n/, scalar <IN>;
 	    print $dump, "\n"    if $DEBUG;
@@ -236,6 +244,30 @@ do_test('reference to scalar',
     LEN = \\d+
     COW_REFCNT = 1
 ');
+
+do_test('immediate boolean',
+        !!0,
+'SV = PVNV\\($ADDR\\) at $ADDR
+  REFCNT = \d+
+  FLAGS = \\(.*\\)
+  IV = 0
+  NV = 0
+  PV = $ADDR "" \[BOOL PL_No\]
+  CUR = 0
+  LEN = 0
+') if $] >= 5.035004;
+
+do_test('assignment of boolean',
+        do { my $tmp = !!1 },
+'SV = PVNV\\($ADDR\\) at $ADDR
+  REFCNT = \d+
+  FLAGS = \\(.*\\)
+  IV = 1
+  NV = 1
+  PV = $ADDR "1" \[BOOL PL_Yes\]
+  CUR = 1
+  LEN = 0
+') if $] >= 5.035004;
 
 my $c_pattern;
 if ($type eq 'N') {
@@ -593,7 +625,7 @@ do_test('scalar with pos magic',
 ');
 
 #
-# TAINTEDDIR is not set on: OS2, AMIGAOS, WIN32, MSDOS
+# TAINTEDDIR is not set on: OS2, AMIGAOS, WIN32
 # environment variables may be invisibly case-forced, hence the (?i:PATH)
 # C<scalar(@ARGV)> is turned into an IV on VMS hence the (?:IV)?
 # Perl 5.18 ensures all env vars end up as strings only, hence the (?:,pIOK)?
@@ -987,6 +1019,35 @@ SV = PVHV\($ADDR\) at $ADDR
     REFCNT = 1
     FLAGS = \(IOK,pIOK\)
     IV = 2
+HASH
+
+tie %tied, "Tie::StdHash";
+do_test('Dump %tied', '%tied', <<'HASH', "", undef, 1);
+SV = PVHV\($ADDR\) at $ADDR
+  REFCNT = 1
+  FLAGS = \(RMG,SHAREKEYS\)
+  MAGIC = $ADDR
+    MG_VIRTUAL = &PL_vtbl_pack
+    MG_TYPE = PERL_MAGIC_tied\(P\)
+    MG_FLAGS = 0x02
+      REFCOUNTED
+    MG_OBJ = $ADDR
+    SV = $RV\($ADDR\) at $ADDR
+      REFCNT = 1
+      FLAGS = \(ROK\)
+      RV = $ADDR
+      SV = PVHV\($ADDR\) at $ADDR
+        REFCNT = 1
+        FLAGS = \(OBJECT,SHAREKEYS\)
+        STASH = $ADDR	"Tie::StdHash"
+        ARRAY = 0x0
+        KEYS = 0
+        FILL = 0
+        MAX = 7
+  ARRAY = 0x0
+  KEYS = 0
+  FILL = 0
+  MAX = 7
 HASH
 
 $_ = "hello";

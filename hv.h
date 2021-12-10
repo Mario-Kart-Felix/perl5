@@ -139,6 +139,14 @@ struct xpvhv {
     STRLEN      xhv_max;        /* subscript of last element of xhv_array */
 };
 
+struct xpvhv_with_aux {
+    HV         *xmg_stash;      /* class package */
+    union _xmgu xmg_u;
+    STRLEN      xhv_keys;       /* total keys, including placeholders */
+    STRLEN      xhv_max;        /* subscript of last element of xhv_array */
+    struct xpvhv_aux xhv_aux;
+};
+
 /*
 =for apidoc AmnU||HEf_SVKEY
 This flag, used in the length slot of hash entries and magic structures,
@@ -242,18 +250,6 @@ C<SV*>.
 
 #define PERL_HASH_DEFAULT_HvMAX 7
 
-/* During hsplit(), if HvMAX(hv)+1 (the new bucket count) is >= this value,
- * we preallocate the HvAUX() struct.
- * The assumption being that we are using so much space anyway we might
- * as well allocate the extra bytes and speed up later keys()
- * or each() operations. We don't do this to small hashes as we assume
- * that a) it will be easy/fast to resize them to add the iterator, and b) that
- * many of them will be objects which won't be traversed. Larger hashes however
- * will take longer to extend, and the size of the aux struct is swamped by the
- * overall length of the bucket array.
- * */
-#define PERL_HV_ALLOC_AUX_SIZE (1 << 9)
-
 /* these hash entry flags ride on hent_klen (for use only in magic/tied HVs) */
 #define HEf_SVKEY	-2	/* hent_key is an SV* */
 
@@ -275,7 +271,7 @@ See L</hv_fill>.
 #define HvMAX(hv)	((XPVHV*)  SvANY(hv))->xhv_max
 /* This quite intentionally does no flag checking first. That's your
    responsibility.  */
-#define HvAUX(hv)	((struct xpvhv_aux*)&(HvARRAY(hv)[HvMAX(hv)+1]))
+#define HvAUX(hv)       (&(((struct xpvhv_with_aux*)  SvANY(hv))->xhv_aux))
 #define HvRITER(hv)	(*Perl_hv_riter_p(aTHX_ MUTABLE_HV(hv)))
 #define HvEITER(hv)	(*Perl_hv_eiter_p(aTHX_ MUTABLE_HV(hv)))
 #define HvRITER_set(hv,r)	Perl_hv_riter_set(aTHX_ MUTABLE_HV(hv), r)
@@ -333,9 +329,6 @@ See L</hv_fill>.
    ((SvOOK(hv) && HvAUX(hv)->xhv_name_u.xhvnameu_name && HvAUX(hv)->xhv_name_count != -1) \
                                  ? HEK_UTF8(HvENAME_HEK_NN(hv)) : 0)
 
-/* the number of keys (including any placeholders) - NOT PART OF THE API */
-#define XHvTOTALKEYS(xhv)	((xhv)->xhv_keys)
-
 /*
  * HvKEYS gets the number of keys that actually exist(), and is provided
  * for backwards compatibility with old XS code. The core uses HvUSEDKEYS
@@ -343,7 +336,7 @@ See L</hv_fill>.
  */
 #define HvKEYS(hv)		HvUSEDKEYS(hv)
 #define HvUSEDKEYS(hv)		(HvTOTALKEYS(hv) - HvPLACEHOLDERS_get(hv))
-#define HvTOTALKEYS(hv)		XHvTOTALKEYS((XPVHV*)  SvANY(hv))
+#define HvTOTALKEYS(hv)         (((XPVHV*) SvANY(hv))->xhv_keys)
 #define HvPLACEHOLDERS(hv)	(*Perl_hv_placeholders_p(aTHX_ MUTABLE_HV(hv)))
 #define HvPLACEHOLDERS_get(hv)	(SvMAGIC(hv) ? Perl_hv_placeholders_get(aTHX_ (const HV *)hv) : 0)
 #define HvPLACEHOLDERS_set(hv,p)	Perl_hv_placeholders_set(aTHX_ MUTABLE_HV(hv), p)
@@ -533,6 +526,9 @@ See L</hv_fill>.
 # define hv_deletehek(hv, hek, flags) \
     hv_common((hv), NULL, HEK_KEY(hek), HEK_LEN(hek), HEK_UTF8(hek), \
               (flags)|HV_DELETE, NULL, HEK_HASH(hek))
+#define hv_existshek(hv, hek)                                           \
+    cBOOL(hv_common((hv), NULL, HEK_KEY(hek), HEK_LEN(hek), HEK_UTF8(hek), \
+                    HV_FETCH_ISEXISTS, NULL, HEK_HASH(hek)))
 #endif
 
 /* This refcounted he structure is used for storing the hints used for lexical
@@ -545,9 +541,7 @@ struct refcounted_he;
 
 /* flags for the refcounted_he API */
 #define REFCOUNTED_HE_KEY_UTF8		0x00000001
-#ifdef PERL_CORE
-# define REFCOUNTED_HE_EXISTS		0x00000002
-#endif
+#define REFCOUNTED_HE_EXISTS		0x00000002
 
 #ifdef PERL_CORE
 

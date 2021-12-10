@@ -16,11 +16,12 @@ use 5.006;
 use strict;
 use warnings;
 
-use Carp qw< carp croak >;
+use Carp         qw< carp croak >;
+use Scalar::Util qw< blessed >;
 
-use Math::BigFloat 1.999718;
+use Math::BigFloat ();
 
-our $VERSION = '0.2614';
+our $VERSION = '0.2620';
 
 our @ISA = qw(Math::BigFloat);
 
@@ -365,6 +366,11 @@ sub new {
     return $class -> binf($d -> sign()) if $d -> is_zero();
 
     # At this point, neither $n nor $d is a NaN or a zero.
+
+    # Copy them now before manipulating them.
+
+    $n = $n -> copy();
+    $d = $d -> copy();
 
     if ($d < 0) {               # make sure denominator is positive
         $n -> bneg();
@@ -788,12 +794,21 @@ sub badd {
         ($class, $x, $y, @r) = objectify(2, @_);
     }
 
-    # +inf + +inf => +inf, -inf + -inf => -inf
-    return $x->binf(substr($x->{sign}, 0, 1))
-      if $x->{sign} eq $y->{sign} && $x->{sign} =~ /^[+-]inf$/;
-
-    # +inf + -inf or -inf + +inf => NaN
-    return $x->bnan() if ($x->{sign} !~ /^[+-]$/ || $y->{sign} !~ /^[+-]$/);
+    unless ($x -> is_finite() && $y -> is_finite()) {
+        if ($x -> is_nan() || $y -> is_nan()) {
+            return $x -> bnan(@r);
+        } elsif ($x -> is_inf("+")) {
+            return $x -> bnan(@r) if $y -> is_inf("-");
+            return $x -> binf("+", @r);
+        } elsif ($x -> is_inf("-")) {
+            return $x -> bnan(@r) if $y -> is_inf("+");
+            return $x -> binf("-", @r);
+        } elsif ($y -> is_inf("+")) {
+            return $x -> binf("+", @r);
+        } elsif ($y -> is_inf("-")) {
+            return $x -> binf("-", @r);
+        }
+    }
 
     #  1   1    gcd(3, 4) = 1    1*3 + 1*4    7
     #  - + -                  = --------- = --
@@ -1110,6 +1125,20 @@ sub binc {
     $x->bnorm()->round(@r);
 }
 
+sub binv {
+    my $x = shift;
+    my @r = @_;
+
+    return $x if $x->modify('binv');
+
+    return $x              if $x -> is_nan();
+    return $x -> bzero()   if $x -> is_inf();
+    return $x -> binf("+") if $x -> is_zero();
+
+    ($x -> {_n}, $x -> {_d}) = ($x -> {_d}, $x -> {_n});
+    $x -> round(@r);
+}
+
 ##############################################################################
 # is_foo methods (the rest is inherited)
 
@@ -1201,6 +1230,35 @@ sub parts {
     ($n, $d);
 }
 
+sub dparts {
+    my $x = shift;
+    my $class = ref $x;
+
+    croak("dparts() is an instance method") unless $class;
+
+    if ($x -> is_nan()) {
+        return $class -> bnan(), $class -> bnan() if wantarray;
+        return $class -> bnan();
+    }
+
+    if ($x -> is_inf()) {
+        return $class -> binf($x -> sign()), $class -> bzero() if wantarray;
+        return $class -> binf($x -> sign());
+    }
+
+    # 355/113 => 3 + 16/113
+
+    my ($q, $r)  = $LIB -> _div($LIB -> _copy($x -> {_n}), $x -> {_d});
+
+    my $int = Math::BigRat -> new($x -> {sign} . $LIB -> _str($q));
+    return $int unless wantarray;
+
+    my $frc = Math::BigRat -> new($x -> {sign} . $LIB -> _str($r),
+                                  $LIB -> _str($x -> {_d}));
+
+    return $int, $frc;
+}
+
 sub length {
     my ($class, $x) = ref($_[0]) ? (undef, $_[0]) : objectify(1, @_);
 
@@ -1244,7 +1302,7 @@ sub bfloor {
 }
 
 sub bint {
-    my ($class, $x, @r) = ref($_[0]) ? (ref($_[0]), $_[0]) : objectify(1, @_);
+    my ($class, $x) = ref($_[0]) ? (ref($_[0]), $_[0]) : objectify(1, @_);
 
     return $x if ($x->{sign} !~ /^[+-]$/ ||     # +/-inf or NaN
                   $LIB -> _is_one($x->{_d}));   # already an integer
@@ -1348,11 +1406,11 @@ sub blog {
     # $x->blog(undef) signals that the base is Euler's number.
 
     if (!ref($_[0]) && $_[0] =~ /^[A-Za-z]|::/) {
-        # E.g., Math::BigFloat->blog(256, 2)
+        # E.g., Math::BigRat->blog(256, 2)
         ($class, $x, $base, @r) =
           defined $_[2] ? objectify(2, @_) : objectify(1, @_);
     } else {
-        # E.g., Math::BigFloat::blog(256, 2) or $x->blog(2)
+        # E.g., Math::BigRat::blog(256, 2) or $x->blog(2)
         ($class, $x, $base, @r) =
           defined $_[1] ? objectify(2, @_) : objectify(1, @_);
     }
@@ -1393,6 +1451,24 @@ sub blog {
         return $x -> binf($sign);
     }
 
+    # Now take care of the cases where $x and/or $base is 1/N.
+    #
+    #   log(1/N) / log(B)   = -log(N)/log(B)
+    #   log(1/N) / log(1/B) =  log(N)/log(B)
+    #   log(N)   / log(1/B) = -log(N)/log(B)
+
+    my $neg = 0;
+    if ($x -> numerator() -> is_one()) {
+        $x -> binv();
+        $neg = !$neg;
+    }
+    if (defined(blessed($base)) && $base -> isa($class)) {
+        if ($base -> numerator() -> is_one()) {
+            $base = $base -> copy() -> binv();
+            $neg = !$neg;
+        }
+    }
+
     # At this point we are done handling all exception cases and trivial cases.
 
     $base = Math::BigFloat -> new($base) if defined $base;
@@ -1406,7 +1482,7 @@ sub blog {
     $x -> {_n}   = $xtmp -> {_n};
     $x -> {_d}   = $xtmp -> {_d};
 
-    return $x;
+    return $neg ? $x -> bneg() : $x;
 }
 
 sub bexp {
@@ -1513,13 +1589,18 @@ sub bnok {
         ($class, $x, $y, @r) = objectify(2, @_);
     }
 
-    my $xint = Math::BigInt -> new($x -> bint() -> bsstr());
-    my $yint = Math::BigInt -> new($y -> bint() -> bsstr());
-    $xint -> bnok($yint);
+    return $x->bnan() if $x->is_nan() || $y->is_nan();
+    return $x->bnan() if (($x->is_finite() && !$x->is_int()) ||
+                          ($y->is_finite() && !$y->is_int()));
 
-    $x -> {sign} = $xint -> {sign};
-    $x -> {_n}   = $xint -> {_n};
-    $x -> {_d}   = $xint -> {_d};
+    my $xint = Math::BigInt -> new($x -> bstr());
+    my $yint = Math::BigInt -> new($y -> bstr());
+    $xint -> bnok($yint);
+    my $xrat = Math::BigRat -> new($xint);
+
+    $x -> {sign} = $xrat -> {sign};
+    $x -> {_n}   = $xrat -> {_n};
+    $x -> {_d}   = $xrat -> {_d};
 
     return $x;
 }
@@ -1570,7 +1651,7 @@ sub bmodpow {
     my $yint = Math::BigInt -> new($y -> copy() -> bint());
     my $mint = Math::BigInt -> new($m -> copy() -> bint());
 
-    $xint -> bmodpow($y, $m, @r);
+    $xint -> bmodpow($yint, $mint, @r);
     my $xtmp = Math::BigRat -> new($xint -> bsstr());
 
     $x -> {sign} = $xtmp -> {sign};
@@ -1592,7 +1673,7 @@ sub bmodinv {
     my $xint = Math::BigInt -> new($x -> copy() -> bint());
     my $yint = Math::BigInt -> new($y -> copy() -> bint());
 
-    $xint -> bmodinv($y, @r);
+    $xint -> bmodinv($yint, @r);
     my $xtmp = Math::BigRat -> new($xint -> bsstr());
 
     $x -> {sign} = $xtmp -> {sign};
@@ -1651,7 +1732,7 @@ sub bsqrt {
 }
 
 sub blsft {
-    my ($class, $x, $y, $b, @r) = objectify(2, @_);
+    my ($class, $x, $y, $b) = objectify(2, @_);
 
     $b = 2 if !defined $b;
     $b = $class -> new($b) unless ref($b) && $b -> isa($class);
@@ -1665,7 +1746,7 @@ sub blsft {
 }
 
 sub brsft {
-    my ($class, $x, $y, $b, @r) = objectify(2, @_);
+    my ($class, $x, $y, $b) = objectify(2, @_);
 
     $b = 2 if !defined $b;
     $b = $class -> new($b) unless ref($b) && $b -> isa($class);
@@ -1803,9 +1884,9 @@ sub bcmp {
 
     if ($x->{sign} !~ /^[+-]$/ || $y->{sign} !~ /^[+-]$/) {
         # $x is NaN and/or $y is NaN
-        return undef if $x->{sign} eq $nan || $y->{sign} eq $nan;
+        return       if $x->{sign} eq $nan || $y->{sign} eq $nan;
         # $x and $y are both either +inf or -inf
-        return 0     if $x->{sign} eq $y->{sign} && $x->{sign} =~ /^[+-]inf$/;
+        return  0    if $x->{sign} eq $y->{sign} && $x->{sign} =~ /^[+-]inf$/;
         # $x = +inf and $y < +inf
         return +1    if $x->{sign} eq '+inf';
         # $x = -inf and $y > -inf
@@ -1850,9 +1931,9 @@ sub bacmp {
 
     if (($x->{sign} !~ /^[+-]$/) || ($y->{sign} !~ /^[+-]$/)) {
         # handle +-inf and NaN
-        return undef if (($x->{sign} eq $nan) || ($y->{sign} eq $nan));
-        return 0 if $x->{sign} =~ /^[+-]inf$/ && $y->{sign} =~ /^[+-]inf$/;
-        return 1 if $x->{sign} =~ /^[+-]inf$/ && $y->{sign} !~ /^[+-]inf$/;
+        return    if (($x->{sign} eq $nan) || ($y->{sign} eq $nan));
+        return  0 if $x->{sign} =~ /^[+-]inf$/ && $y->{sign} =~ /^[+-]inf$/;
+        return  1 if $x->{sign} =~ /^[+-]inf$/ && $y->{sign} !~ /^[+-]inf$/;
         return -1;
     }
 
@@ -1864,7 +1945,7 @@ sub bacmp {
 sub beq {
     my $self    = shift;
     my $selfref = ref $self;
-    my $class   = $selfref || $self;
+    #my $class   = $selfref || $self;
 
     croak 'beq() is an instance method, not a class method' unless $selfref;
     croak 'Wrong number of arguments for beq()' unless @_ == 1;
@@ -1876,7 +1957,7 @@ sub beq {
 sub bne {
     my $self    = shift;
     my $selfref = ref $self;
-    my $class   = $selfref || $self;
+    #my $class   = $selfref || $self;
 
     croak 'bne() is an instance method, not a class method' unless $selfref;
     croak 'Wrong number of arguments for bne()' unless @_ == 1;
@@ -1888,7 +1969,7 @@ sub bne {
 sub blt {
     my $self    = shift;
     my $selfref = ref $self;
-    my $class   = $selfref || $self;
+    #my $class   = $selfref || $self;
 
     croak 'blt() is an instance method, not a class method' unless $selfref;
     croak 'Wrong number of arguments for blt()' unless @_ == 1;
@@ -1900,7 +1981,7 @@ sub blt {
 sub ble {
     my $self    = shift;
     my $selfref = ref $self;
-    my $class   = $selfref || $self;
+    #my $class   = $selfref || $self;
 
     croak 'ble() is an instance method, not a class method' unless $selfref;
     croak 'Wrong number of arguments for ble()' unless @_ == 1;
@@ -1912,7 +1993,7 @@ sub ble {
 sub bgt {
     my $self    = shift;
     my $selfref = ref $self;
-    my $class   = $selfref || $self;
+    #my $class   = $selfref || $self;
 
     croak 'bgt() is an instance method, not a class method' unless $selfref;
     croak 'Wrong number of arguments for bgt()' unless @_ == 1;
@@ -1924,7 +2005,7 @@ sub bgt {
 sub bge {
     my $self    = shift;
     my $selfref = ref $self;
-    my $class   = $selfref || $self;
+    #my $class   = $selfref || $self;
 
     croak 'bge() is an instance method, not a class method'
         unless $selfref;
@@ -1943,7 +2024,17 @@ sub numify {
 
     # Non-finite number.
 
-    return $x->bstr() if $x->{sign} !~ /^[+-]$/;
+    if ($x -> is_nan()) {
+        require Math::Complex;
+        my $inf = $Math::Complex::Inf;
+        return $inf - $inf;
+    }
+
+    if ($x -> is_inf()) {
+        require Math::Complex;
+        my $inf = $Math::Complex::Inf;
+        return $x -> is_negative() ? -$inf : $inf;
+    }
 
     # Finite number.
 
@@ -2019,18 +2110,27 @@ sub as_oct {
 sub from_hex {
     my $class = shift;
 
-    $class->new(@_);
+    # The relationship should probably go the otherway, i.e, that new() calls
+    # from_hex(). Fixme!
+    my ($x, @r) = @_;
+    $x =~ s|^\s*(?:0?[Xx]_*)?|0x|;
+    $class->new($x, @r);
 }
 
 sub from_bin {
     my $class = shift;
 
-    $class->new(@_);
+    # The relationship should probably go the otherway, i.e, that new() calls
+    # from_bin(). Fixme!
+    my ($x, @r) = @_;
+    $x =~ s|^\s*(?:0?[Bb]_*)?|0b|;
+    $class->new($x, @r);
 }
 
 sub from_oct {
     my $class = shift;
 
+    # Why is this different from from_hex() and from_bin()? Fixme!
     my @parts;
     for my $c (@_) {
         push @parts, Math::BigInt->from_oct($c);
@@ -2043,57 +2143,101 @@ sub from_oct {
 
 sub import {
     my $class = shift;
-    my $l = scalar @_;
-    my $lib = ''; my @a;
-    my $try = 'try';
+    my @a;                      # unrecognized arguments
+    my $lib_param = '';
+    my $lib_value = '';
 
-    for (my $i = 0; $i < $l ; $i++) {
-        if ($_[$i] eq ':constant') {
-            # this rest causes overlord er load to step in
-            overload::constant float => sub { $class->new(shift); };
+    while (@_) {
+        my $param = shift;
+
+        # Enable overloading of constants.
+
+        if ($param eq ':constant') {
+            overload::constant
+
+                integer => sub {
+                    $class -> new(shift);
+                },
+
+                float   => sub {
+                    $class -> new(shift);
+                },
+
+                binary  => sub {
+                    # E.g., a literal 0377 shall result in an object whose value
+                    # is decimal 255, but new("0377") returns decimal 377.
+                    return $class -> from_oct($_[0]) if $_[0] =~ /^0_*[0-7]/;
+                    $class -> new(shift);
+                };
+            next;
         }
-        #    elsif ($_[$i] eq 'upgrade')
-        #      {
-        #     # this causes upgrading
-        #      $upgrade = $_[$i+1];             # or undef to disable
-        #      $i++;
-        #      }
-        elsif ($_[$i] eq 'downgrade') {
-            # this causes downgrading
-            $downgrade = $_[$i+1]; # or undef to disable
-            $i++;
-        } elsif ($_[$i] =~ /^(lib|try|only)\z/) {
-            $lib = $_[$i+1] || ''; # default Calc
-            $try = $1;             # lib, try or only
-            $i++;
-        } elsif ($_[$i] eq 'with') {
-            # this argument is no longer used
-            #$LIB = $_[$i+1] || 'Math::BigInt::Calc'; # default Math::BigInt::Calc
-            $i++;
-        } else {
-            push @a, $_[$i];
+
+        # Upgrading.
+
+        if ($param eq 'upgrade') {
+            $class -> upgrade(shift);
+            next;
         }
+
+        # Downgrading.
+
+        if ($param eq 'downgrade') {
+            $class -> downgrade(shift);
+            next;
+        }
+
+        # Accuracy.
+
+        if ($param eq 'accuracy') {
+            $class -> accuracy(shift);
+            next;
+        }
+
+        # Precision.
+
+        if ($param eq 'precision') {
+            $class -> precision(shift);
+            next;
+        }
+
+        # Rounding mode.
+
+        if ($param eq 'round_mode') {
+            $class -> round_mode(shift);
+            next;
+        }
+
+        # Backend library.
+
+        if ($param =~ /^(lib|try|only)\z/) {
+            # alternative library
+            $lib_param = $param;        # "lib", "try", or "only"
+            $lib_value = shift;
+            next;
+        }
+
+        if ($param eq 'with') {
+            # alternative class for our private parts()
+            # XXX: no longer supported
+            # $LIB = shift() || 'Calc';
+            # carp "'with' is no longer supported, use 'lib', 'try', or 'only'";
+            shift;
+            next;
+        }
+
+        # Unrecognized parameter.
+
+        push @a, $param;
     }
+
     require Math::BigInt;
 
-    # let use Math::BigInt lib => 'GMP'; use Math::BigRat; still have GMP
-    if ($lib ne '') {
-        my @c = split /\s*,\s*/, $lib;
-        foreach (@c) {
-            $_ =~ tr/a-zA-Z0-9://cd; # limit to sane characters
-        }
-        $lib = join(",", @c);
-    }
     my @import = ('objectify');
-    push @import, $try => $lib if $lib ne '';
+    push @import, $lib_param, $lib_value if $lib_param ne '';
+    Math::BigInt -> import(@import);
 
-    # LIB already loaded, so feed it our lib arguments
-    Math::BigInt->import(@import);
-
-    $LIB = Math::BigFloat->config("lib");
-
-    # register us with LIB to get notified of future lib changes
-    Math::BigInt::_register_callback($class, sub { $LIB = $_[0]; });
+    # find out which one was actually loaded
+    $LIB = Math::BigInt -> config("lib");
 
     # any non :constant stuff is handled by Exporter (loaded by parent class)
     # even if @_ is empty, to give it a chance
@@ -2200,6 +2344,10 @@ Returns a copy of the denominator (the part under the line) as positive BigInt.
 
 Return a list consisting of (signed) numerator and (unsigned) denominator as
 BigInts.
+
+=item dparts()
+
+Returns the integer part and the fraction part.
 
 =item numify()
 
@@ -2513,7 +2661,13 @@ Subtracts $y from $x and returns the result.
 In scalar context, divides $x by $y and returns the result. In list context,
 does floored division (F-division), returning an integer $q and a remainder $r
 so that $x = $q * $y + $r. The remainer (modulo) is equal to what is returned
-by C<$x->bmod($y)>.
+by C<< $x->bmod($y) >>.
+
+=item binv()
+
+    $x->binv();
+
+Inverse of $x.
 
 =item bdec()
 
@@ -2695,6 +2849,70 @@ supported.
 
 =back
 
+=head1 NUMERIC LITERALS
+
+After C<use Math::BigRat ':constant'> all numeric literals in the given scope
+are converted to C<Math::BigRat> objects. This conversion happens at compile
+time. Every non-integer is convert to a NaN.
+
+For example,
+
+    perl -MMath::BigRat=:constant -le 'print 2**150'
+
+prints the exact value of C<2**150>. Note that without conversion of constants
+to objects the expression C<2**150> is calculated using Perl scalars, which
+leads to an inaccurate result.
+
+Please note that strings are not affected, so that
+
+    use Math::BigRat qw/:constant/;
+
+    $x = "1234567890123456789012345678901234567890"
+            + "123456789123456789";
+
+does give you what you expect. You need an explicit Math::BigRat->new() around
+at least one of the operands. You should also quote large constants to prevent
+loss of precision:
+
+    use Math::BigRat;
+
+    $x = Math::BigRat->new("1234567889123456789123456789123456789");
+
+Without the quotes Perl first converts the large number to a floating point
+constant at compile time, and then converts the result to a Math::BigRat object
+at run time, which results in an inaccurate result.
+
+=head2 Hexadecimal, octal, and binary floating point literals
+
+Perl (and this module) accepts hexadecimal, octal, and binary floating point
+literals, but use them with care with Perl versions before v5.32.0, because some
+versions of Perl silently give the wrong result. Below are some examples of
+different ways to write the number decimal 314.
+
+Hexadecimal floating point literals:
+
+    0x1.3ap+8         0X1.3AP+8
+    0x1.3ap8          0X1.3AP8
+    0x13a0p-4         0X13A0P-4
+
+Octal floating point literals (with "0" prefix):
+
+    01.164p+8         01.164P+8
+    01.164p8          01.164P8
+    011640p-4         011640P-4
+
+Octal floating point literals (with "0o" prefix) (requires v5.34.0):
+
+    0o1.164p+8        0O1.164P+8
+    0o1.164p8         0O1.164P8
+    0o11640p-4        0O11640P-4
+
+Binary floating point literals:
+
+    0b1.0011101p+8    0B1.0011101P+8
+    0b1.0011101p8     0B1.0011101P8
+    0b10011101000p-2  0B10011101000P-2
+
 =head1 BUGS
 
 Please report any bugs or feature requests to
@@ -2714,43 +2932,25 @@ You can also look for information at:
 
 =over 4
 
+=item * GitHub
+
+L<https://github.com/pjacklam/p5-Math-BigRat>
+
 =item * RT: CPAN's request tracker
 
-L<https://rt.cpan.org/Public/Dist/Display.html?Name=Math-BigRat>
+L<https://rt.cpan.org/Dist/Display.html?Name=Math-BigRat>
 
-=item * AnnoCPAN: Annotated CPAN documentation
+=item * MetaCPAN
 
-L<http://annocpan.org/dist/Math-BigRat>
-
-=item * CPAN Ratings
-
-L<http://cpanratings.perl.org/dist/Math-BigRat>
-
-=item * Search CPAN
-
-L<http://search.cpan.org/dist/Math-BigRat/>
+L<https://metacpan.org/release/Math-BigRat>
 
 =item * CPAN Testers Matrix
 
 L<http://matrix.cpantesters.org/?dist=Math-BigRat>
 
-=item * The Bignum mailing list
+=item * CPAN Ratings
 
-=over 4
-
-=item * Post to mailing list
-
-C<bignum at lists.scsys.co.uk>
-
-=item * View mailing list
-
-L<http://lists.scsys.co.uk/pipermail/bignum/>
-
-=item * Subscribe/Unsubscribe
-
-L<http://lists.scsys.co.uk/cgi-bin/mailman/listinfo/bignum>
-
-=back
+L<https://cpanratings.perl.org/dist/Math-BigRat>
 
 =back
 
@@ -2774,7 +2974,7 @@ Tels L<http://bloodgate.com/> 2001-2009.
 
 =item *
 
-Maintained by Peter John Acklam <pjacklam@online.no> 2011-
+Maintained by Peter John Acklam <pjacklam@gmail.com> 2011-
 
 =back
 

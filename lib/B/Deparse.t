@@ -413,9 +413,8 @@ like runperl(stderr => 1, switches => [ '-MO=-qq,Deparse', $path ],
      qr/sub f\s*\(\$\)\s*\{\s*\}/,
     'predeclared prototyped subs';
 like runperl(stderr => 1, switches => [ '-MO=-qq,Deparse', $path ],
-           prog => 'use Scalar::Util q-weaken-;
-                    sub f($);
-                    BEGIN { weaken($_=\$::{f}) }'),
+           prog => 'sub f($);
+                    BEGIN { use builtin q-weaken-; weaken($_=\$::{f}) }'),
      qr/sub f\s*\(\$\)\s*;/,
     'prototyped stub with weak reference to the stash entry';
 like runperl(stderr => 1, switches => [ '-MO=-qq,Deparse', $path ],
@@ -2530,6 +2529,18 @@ foreach \&a (sub { 9; } , sub { 10; } ) {
     die;
 }
 ####
+# CONTEXT no warnings 'experimental::for_list';
+my %hash;
+foreach my ($key, $value) (%hash) {
+    study $_;
+}
+####
+# CONTEXT no warnings 'experimental::for_list';
+my @ducks;
+foreach my ($tick, $trick, $track) (@ducks) {
+    study $_;
+}
+####
 # join $foo, pos
 my $foo;
 $_ = join $foo, pos
@@ -3162,3 +3173,37 @@ $a = int($c == $d != $e);
 $a = $b < ($c == $d != $e);
 $a = $b == ($c == $d != $e);
 $a = $b & $c == $d != $e;
+####
+# try/catch
+# CONTEXT use feature 'try'; no warnings 'experimental::try';
+try {
+    FIRST();
+}
+catch($var) {
+    SECOND();
+}
+####
+# CONTEXT use feature 'try'; no warnings 'experimental::try';
+try {
+    FIRST();
+}
+catch($var) {
+    my $x;
+    SECOND();
+}
+####
+# defer blocks
+# CONTEXT use feature "defer"; no warnings 'experimental::defer';
+defer {
+    $a = 123;
+}
+####
+# builtin:: functions
+my $x;
+$x = builtin::isbool(undef);
+$x = builtin::isweak(undef);
+builtin::weaken($x);
+builtin::unweaken($x);
+$x = builtin::blessed(undef);
+$x = builtin::refaddr(undef);
+$x = builtin::reftype(undef);

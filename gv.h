@@ -245,6 +245,7 @@ Return the CV from the GV.
 
 /* Flags for gv_fetchmeth_pvn and gv_autoload_pvn*/
 #define GV_SUPER	0x1000	/* SUPER::method */
+#define GV_NOUNIVERSAL  0x2000  /* Skip UNIVERSAL lookup */
 
 /* Flags for gv_autoload_*/
 #define GV_AUTOLOAD_ISMETHOD 1	/* autoloading a method? */
@@ -259,6 +260,9 @@ Return the CV from the GV.
 /* The bit flags that don't cause gv_fetchpv() to add a symbol if not
    found (with the exception GV_ADDMG, which *might* cause the symbol
    to be added) */
+
+/* gv_fetchfile_flags() */
+#define GVF_NOADD       0x01    /* don't add the glob if it doesn't exist */
 
 #define gv_fullname3(sv,gv,prefix) gv_fullname4(sv,gv,prefix,TRUE)
 #define gv_efullname3(sv,gv,prefix) gv_efullname4(sv,gv,prefix,TRUE)

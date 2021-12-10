@@ -16,7 +16,7 @@
 #
 # This script is normally invoked from regen.pl.
 
-$VERSION = '1.50';
+$VERSION = '1.56';
 
 BEGIN {
     require './regen/regen_lib.pl';
@@ -95,8 +95,6 @@ my $tree = {
                                     [ 5.019, DEFAULT_ON ],
                                 'experimental::signatures' =>
                                     [ 5.019, DEFAULT_ON ],
-                                'experimental::win32_perlio' =>
-                                    [ 5.021, DEFAULT_ON ],
                                 'experimental::refaliasing' =>
                                     [ 5.021, DEFAULT_ON ],
                                 'experimental::re_strict' =>
@@ -119,6 +117,12 @@ my $tree = {
                                     [ 5.029, DEFAULT_ON ],
                                 'experimental::isa' =>
                                     [ 5.031, DEFAULT_ON ],
+                                'experimental::try' =>
+                                    [ 5.033, DEFAULT_ON ],
+                                'experimental::defer' =>
+                                    [ 5.035, DEFAULT_ON ],
+                                'experimental::for_list' =>
+                                    [ 5.035, DEFAULT_ON ],
                         }],
 
         'missing'       => [ 5.021, DEFAULT_OFF],
@@ -464,10 +468,10 @@ category parameters passed.
 #define packWARN3(a,b,c)	((a) | ((b)<<8) | ((c)<<16)             )
 #define packWARN4(a,b,c,d)	((a) | ((b)<<8) | ((c)<<16) | ((d) <<24))
 
-#define unpackWARN1(x)		((x)        & 0xFF)
-#define unpackWARN2(x)		(((x) >>8)  & 0xFF)
-#define unpackWARN3(x)		(((x) >>16) & 0xFF)
-#define unpackWARN4(x)		(((x) >>24) & 0xFF)
+#define unpackWARN1(x)		((U8)  (x)       )
+#define unpackWARN2(x)		((U8) ((x) >>  8))
+#define unpackWARN3(x)		((U8) ((x) >> 16))
+#define unpackWARN4(x)		((U8) ((x) >> 24))
 
 #define ckDEAD(x)							\
    (PL_curcop &&                                                        \
@@ -882,6 +886,9 @@ warnings - Perl pragma to control optional warnings
     use warnings;
     no warnings;
 
+    # Standard warnings are enabled by use v5.35 or above
+    use v5.35;
+
     use warnings "all";
     no warnings "uninitialized";
 
@@ -946,6 +953,9 @@ The code in the enclosing block has warnings enabled, but the inner
 block has them disabled.  In this case that means the assignment to the
 scalar C<$z> will trip the C<"Scalar value @x[0] better written as $x[0]">
 warning, but the assignment to the scalar C<$y> will not.
+
+All warnings are enabled automatically within the scope of
+a C<L<use v5.35|perlfunc/use VERSION>> (or higher) declaration.
 
 =head2 Default Warnings and Optional Warnings
 
@@ -1210,7 +1220,7 @@ The L<strictures|strictures/VERSION-2> module on CPAN offers one example of
 a warnings subset that the module's authors believe is relatively safe to
 fatalize.
 
-B<NOTE:> users of FATAL warnings, especially those using
+B<NOTE:> Users of FATAL warnings, especially those using
 C<< FATAL => 'all' >>, should be fully aware that they are risking future
 portability of their programs by doing so.  Perl makes absolutely no
 commitments to not introduce new warnings or warnings categories in the
@@ -1277,6 +1287,9 @@ use:
 
    use v5.20;       # Perl 5.20 or greater is required for the following
    use warnings 'FATAL';  # short form of "use warnings FATAL => 'all';"
+
+However, you should still heed the guidance earlier in this section against
+using C<< use warnings FATAL => 'all'; >>.
 
 If you want your program to be compatible with versions of Perl before
 5.20, you must use C<< use warnings FATAL => 'all'; >> instead.  (In

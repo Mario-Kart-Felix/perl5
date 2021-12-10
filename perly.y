@@ -69,6 +69,7 @@
 %token <ival> FORMAT SUB SIGSUB ANONSUB ANON_SIGSUB PACKAGE USE
 %token <ival> WHILE UNTIL IF UNLESS ELSE ELSIF CONTINUE FOR
 %token <ival> GIVEN WHEN DEFAULT
+%token <ival> TRY CATCH
 %token <ival> LOOPEX DOTDOT YADAYADA
 %token <ival> FUNC0 FUNC1 FUNC UNIOP LSTOP
 %token <ival> MULOP ADDOP
@@ -76,6 +77,7 @@
 %token <ival> LOCAL MY REQUIRE
 %token <ival> COLONATTR FORMLBRACK FORMRBRACK
 %token <ival> SUBLEXSTART SUBLEXEND
+%token <ival> DEFER
 
 %type <ival> grammar remember mremember
 %type <ival>  startsub startanonsub startformsub
@@ -89,7 +91,7 @@
 %type <opval> listexpr nexpr texpr iexpr mexpr mnexpr
 %type <opval> optlistexpr optexpr optrepl indirob listop method
 %type <opval> formname subname proto cont my_scalar my_var
-%type <opval> refgen_topic formblock
+%type <opval> list_of_scalars my_list_of_scalars refgen_topic formblock
 %type <opval> subattrlist myattrlist myattrterm myterm
 %type <opval> termbinop termunop anonymous termdo
 %type <opval> termrelop relopchain termeqop eqopchain
@@ -424,6 +426,11 @@ barestmt:	PLUGSTMT
 			  $$ = block_end($remember, newFOROP(0, $my_scalar, $mexpr, $mblock, $cont));
 			  parser->copline = (line_t)$FOR;
 			}
+	|	FOR MY remember PERLY_PAREN_OPEN my_list_of_scalars PERLY_PAREN_CLOSE PERLY_PAREN_OPEN mexpr PERLY_PAREN_CLOSE mblock cont
+			{
+			  $$ = block_end($remember, newFOROP(0, $my_list_of_scalars, $mexpr, $mblock, $cont));
+			  parser->copline = (line_t)$FOR;
+			}
 	|	FOR scalar PERLY_PAREN_OPEN remember mexpr PERLY_PAREN_CLOSE mblock cont
 			{
 			  $$ = block_end($remember, newFOROP(0,
@@ -459,6 +466,16 @@ barestmt:	PLUGSTMT
 				  newFOROP(0, NULL, $mexpr, $mblock, $cont));
 			  parser->copline = (line_t)$FOR;
 			}
+	|       TRY mblock[try] CATCH PERLY_PAREN_OPEN 
+			{ parser->in_my = 1; }
+	        remember scalar 
+			{ parser->in_my = 0; intro_my(); }
+		PERLY_PAREN_CLOSE mblock[catch]
+			{
+			  $$ = newTRYCATCHOP(0,
+				  $try, $scalar, block_end($remember, op_scope($catch)));
+			  parser->copline = (line_t)$TRY;
+			}
 	|	block cont
 			{
 			  /* a block is a loop that happens once */
@@ -483,6 +500,10 @@ barestmt:	PLUGSTMT
 	|	sideff PERLY_SEMICOLON
 			{
 			  $$ = $sideff;
+			}
+	|	DEFER mblock
+			{
+			  $$ = newDEFEROP(0, op_scope($2));
 			}
 	|	YADAYADA PERLY_SEMICOLON
 			{
@@ -1359,6 +1380,20 @@ optrepl:	%empty
    lexical */
 my_scalar:	scalar
 			{ parser->in_my = 0; $$ = my($scalar); }
+	;
+
+/* A list of scalars for "for my ($foo, $bar) (@baz)"  */
+list_of_scalars:	list_of_scalars[list] PERLY_COMMA
+			{ $$ = $list; }
+	|		list_of_scalars[list] PERLY_COMMA scalar
+			{
+			  $$ = op_append_elem(OP_LIST, $list, $scalar);
+			}
+	|		scalar %prec PREC_LOW
+	;
+
+my_list_of_scalars:	list_of_scalars
+			{ parser->in_my = 0; $$ = $list_of_scalars; }
 	;
 
 my_var	:	scalar

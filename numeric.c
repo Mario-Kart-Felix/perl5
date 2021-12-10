@@ -1626,9 +1626,9 @@ Perl_my_atof3(pTHX_ const char* orig, NV* value, const STRLEN len)
     const char* send = s + ((len != 0)
                            ? len
                            : strlen(orig)); /* one past the last */
-    bool negative = 0;
 #endif
 #if defined(USE_PERL_ATOF) && !defined(Perl_strtod)
+    bool negative = 0;
     UV accumulator[2] = {0,0};	/* before/after dp */
     bool seen_digit = 0;
     I32 exp_adjust[2] = {0,0};
@@ -1648,10 +1648,20 @@ Perl_my_atof3(pTHX_ const char* orig, NV* value, const STRLEN len)
     while (s < send && isSPACE(*s))
         ++s;
 
+#  if defined(NV_INF) || defined(NV_NAN)
+    {
+        char* endp;
+        if ((endp = S_my_atof_infnan(aTHX_ s, FALSE, send, value)))
+            return endp;
+    }
+#  endif
+
     /* sign */
     switch (*s) {
         case '-':
+#  if !defined(Perl_strtod)
             negative = 1;
+#  endif
             /* FALLTHROUGH */
         case '+':
             ++s;
@@ -1663,9 +1673,6 @@ Perl_my_atof3(pTHX_ const char* orig, NV* value, const STRLEN len)
         char* endp;
         char* copy = NULL;
 
-        if ((endp = S_my_atof_infnan(aTHX_ s, negative, send, value)))
-            return endp;
-
         /* strtold() accepts 0x-prefixed hex and in POSIX implementations,
            0b-prefixed binary numbers, which is backward incompatible
         */
@@ -1675,6 +1682,11 @@ Perl_my_atof3(pTHX_ const char* orig, NV* value, const STRLEN len)
             return (char *)s+1;
         }
 
+        /* We do not want strtod to parse whitespace after the sign, since
+         * that would give backward-incompatible results. So we rewind and
+         * let strtod handle the whitespace and sign character itself. */
+        s = orig;
+
         /* If the length is passed in, the input string isn't NUL-terminated,
          * and in it turns out the function below assumes it is; therefore we
          * create a copy and NUL-terminate that */
@@ -1682,7 +1694,7 @@ Perl_my_atof3(pTHX_ const char* orig, NV* value, const STRLEN len)
             Newx(copy, len + 1, char);
             Copy(orig, copy, len, char);
             copy[len] = '\0';
-            s = copy + (s - orig);
+            s = copy;
         }
 
         result[2] = S_strtod(aTHX_ s, &endp);
@@ -1696,7 +1708,8 @@ Perl_my_atof3(pTHX_ const char* orig, NV* value, const STRLEN len)
         }
 
         if (s != endp) {
-            *value = negative ? -result[2] : result[2];
+            /* Note that negation is handled by strtod. */
+            *value = result[2];
             return endp;
         }
         return NULL;
@@ -1720,25 +1733,17 @@ Perl_my_atof3(pTHX_ const char* orig, NV* value, const STRLEN len)
  * both the first and last digit, since neither can hold all values from
  * 0..9; but for calculating the value we must examine those two digits.
  */
-#ifdef MAX_SIG_DIG_PLUS
+#  ifdef MAX_SIG_DIG_PLUS
     /* It is not necessarily the case that adding 2 to NV_DIG gets all the
        possible digits in a NV, especially if NVs are not IEEE compliant
        (e.g., long doubles on IRIX) - Allen <allens@cpan.org> */
-# define MAX_SIG_DIGITS (NV_DIG+MAX_SIG_DIG_PLUS)
-#else
-# define MAX_SIG_DIGITS (NV_DIG+2)
-#endif
+#   define MAX_SIG_DIGITS (NV_DIG+MAX_SIG_DIG_PLUS)
+#  else
+#   define MAX_SIG_DIGITS (NV_DIG+2)
+#  endif
 
 /* the max number we can accumulate in a UV, and still safely do 10*N+9 */
-#define MAX_ACCUMULATE ( (UV) ((UV_MAX - 9)/10))
-
-#if defined(NV_INF) || defined(NV_NAN)
-    {
-        char* endp;
-        if ((endp = S_my_atof_infnan(aTHX_ s, negative, send, value)))
-            return endp;
-    }
-#endif
+#  define MAX_ACCUMULATE ( (UV) ((UV_MAX - 9)/10))
 
     /* we accumulate digits into an integer; when this becomes too
      * large, we add the total to NV and start again */
@@ -1847,7 +1852,7 @@ Perl_my_atof3(pTHX_ const char* orig, NV* value, const STRLEN len)
        or it's long double/quadmath equivalent) and disabled USE_PERL_ATOF, thus
        removing any way for perl to convert strings to floating point numbers.
     */
-# error No mechanism to convert strings to numbers available
+#  error No mechanism to convert strings to numbers available
 #endif
 }
 

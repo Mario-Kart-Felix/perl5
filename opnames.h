@@ -414,10 +414,22 @@ typedef enum opcode {
 	OP_ISA		 = 397,
 	OP_CMPCHAIN_AND	 = 398,
 	OP_CMPCHAIN_DUP	 = 399,
+	OP_ENTERTRYCATCH = 400,
+	OP_LEAVETRYCATCH = 401,
+	OP_POPTRY	 = 402,
+	OP_CATCH	 = 403,
+	OP_PUSHDEFER	 = 404,
+	OP_ISBOOL	 = 405,
+	OP_ISWEAK	 = 406,
+	OP_WEAKEN	 = 407,
+	OP_UNWEAKEN	 = 408,
+	OP_BLESSED	 = 409,
+	OP_REFADDR	 = 410,
+	OP_REFTYPE	 = 411,
 	OP_max		
 } opcode;
 
-#define MAXO 400
+#define MAXO 412
 #define OP_FREED MAXO
 
 /* the OP_IS_* macros are optimized to a simple range check because

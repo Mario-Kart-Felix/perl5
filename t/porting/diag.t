@@ -544,7 +544,6 @@ Debug leaking scalars child failed%s with errno %d: %s
 detach of a thread which could not start
 detach on an already detached thread
 detach on a thread with a waiter
-'/' does not take a repeat count in %s
 -Dp not implemented on this platform
 Empty array reference given to mod2fname
 endhostent not implemented!
@@ -612,10 +611,6 @@ Invalid argument to sv_cat_decode
 Invalid range "%c-%c" in transliteration operator
 Invalid separator character %c%c%c in PerlIO layer specification %s
 Invalid TOKEN object ignored
-Invalid type '%c' in pack
-Invalid type '%c' in %s
-Invalid type '%c' in unpack
-Invalid type ',' in %s
 ioctl implemented only on sockets
 ioctlsocket not implemented!
 join with a thread with a waiter
@@ -675,11 +670,6 @@ switching effective gid is not implemented
 switching effective uid is not implemented
 System V IPC is not implemented on this machine
 Terminating on signal SIG%s(%d)
-The crypt() function is not implemented on NetWare
-The flock() function is not implemented on NetWare
-The rewinddir() function is not implemented on NetWare
-The seekdir() function is not implemented on NetWare
-The telldir() function is not implemented on NetWare
 This perl was compiled without taint support. Cowardly refusing to run with -t or -T flags
 This version of OS/2 does not support %s.%s
 Too deeply nested ()-groups in %s

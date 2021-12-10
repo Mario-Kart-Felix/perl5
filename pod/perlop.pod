@@ -134,9 +134,9 @@ values only, not array values.
     left	+ - .
     left	<< >>
     nonassoc	named unary operators
+    nonassoc    isa
     chained 	< > <= >= lt gt le ge
     chain/na	== != eq ne <=> cmp ~~
-    nonassoc    isa
     left	& &.
     left	| |. ^ ^.
     left	&&
@@ -230,8 +230,9 @@ assignment.)  See L<perlreftut> and L<perlref>.
 
 Otherwise, the right side is a method name or a simple scalar
 variable containing either the method name or a subroutine reference,
-and the left side must be either an object (a blessed reference)
-or a class name (that is, a package name).  See L<perlobj>.
+and (if it is a method name) the left side must be either an object (a
+blessed reference) or a class name (that is, a package name).  See
+L<perlobj>.
 
 The dereferencing cases (as opposed to method-calling cases) are
 somewhat extended by the C<postderef> feature.  For the
@@ -626,6 +627,13 @@ support C<"NaN">.)
 Binary C<"cmp"> returns -1, 0, or 1 depending on whether the left
 argument is stringwise less than, equal to, or greater than the right
 argument.
+
+Here we can see the difference between <=> and cmp,
+
+    print 10 <=> 2 #prints 1
+    print 10 cmp 2 #prints -1
+
+(likewise between gt and >, lt and <, etc.)
 X<cmp>
 
 Binary C<"~~"> does a smartmatch between its arguments.  Smart matching
@@ -1796,7 +1804,7 @@ are quoted by C<\Q>.
 C<\L>, C<\U>, C<\F>, and C<\Q> can stack, in which case you need one
 C<\E> for each.  For example:
 
- say"This \Qquoting \ubusiness \Uhere isn't quite\E done yet,\E is it?";
+ say "This \Qquoting \ubusiness \Uhere isn't quite\E done yet,\E is it?";
  This quoting\ Business\ HERE\ ISN\'T\ QUITE\ done\ yet\, is it?
 
 If a S<C<use locale>> form that includes C<LC_CTYPE> is in effect (see
@@ -2602,7 +2610,8 @@ of those; in other words, an lvalue.
 The characters delimitting I<SEARCHLIST> and I<REPLACEMENTLIST>
 can be any printable character, not just forward slashes.  If they
 are single quotes (C<tr'I<SEARCHLIST>'I<REPLACEMENTLIST>'>), the only
-interpolation is removal of C<\> from pairs of C<\\>.
+interpolation is removal of C<\> from pairs of C<\\>, and hyphens are
+interpreted literally rather than specifying a character range.
 
 Otherwise, a character range may be specified with a hyphen, so
 C<tr/A-J/0-9/> does the same replacement as
@@ -2885,12 +2894,18 @@ This will print...
 
 ...with no leading whitespace.
 
-The delimiter is used to determine the B<exact> whitespace to
-remove from the beginning of each line.  All lines B<must> have
-at least the same starting whitespace (except lines only
-containing a newline) or perl will croak.  Tabs and spaces can
-be mixed, but are matched exactly.  One tab will not be equal to
-8 spaces!
+The line containing the delimiter that marks the end of the here-doc
+determines the indentation template for the whole thing.  Compilation
+croaks if any non-empty line inside the here-doc does not begin with the
+precise indentation of the terminating line.  (An empty line consists of
+the single character "\n".)  For example, suppose the terminating line
+begins with a tab character followed by 4 space characters.  Every
+non-empty line in the here-doc must begin with a tab followed by 4
+spaces.  They are stripped from each line, and any leading white space
+remaining on a line serves as the indentation for that line.  Currently,
+only the TAB and SPACE characters are treated as whitespace for this
+purpose.  Tabs and spaces may be mixed, but are matched exactly; tabs
+remain tabs and are not expanded.
 
 Additional beginning whitespace (beyond what preceded the
 delimiter) will be preserved:
@@ -3107,7 +3122,7 @@ are not available for here-docs.
 
 No interpolation is performed at this stage.
 Any backslashed sequences including C<\\> are treated at the stage
-to L</"parsing regular expressions">.
+of L</"Parsing regular expressions">.
 
 =item C<''>, C<q//>, C<tr'''>, C<y'''>, the replacement of C<s'''>
 
@@ -3176,7 +3191,7 @@ brackets.  because the outcome may be determined by voting based
 on heuristic estimators, the result is not strictly predictable.
 Fortunately, it's usually correct for ambiguous cases.
 
-=item the replacement of C<s///>
+=item The replacement of C<s///>
 
 Processing of C<\Q>, C<\U>, C<\u>, C<\L>, C<\l>, C<\F> and interpolation
 happens as with C<qq//> constructs.
@@ -3246,7 +3261,7 @@ non-whitespace choices.
 This step is the last one for all constructs except regular expressions,
 which are processed further.
 
-=item parsing regular expressions
+=item Parsing regular expressions
 X<regexp, parse>
 
 Previous steps were performed during the compilation of Perl code,

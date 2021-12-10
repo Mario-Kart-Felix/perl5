@@ -1,3 +1,4 @@
+#line 2 "universal.c"
 /*    universal.c
  *
  *    Copyright (C) 1996, 1997, 1998, 1999, 2000, 2001, 2002, 2003, 2004,
@@ -216,12 +217,7 @@ Perl_sv_isa_sv(pTHX_ SV *sv, SV *namesv)
     if(!SvROK(sv) || !SvOBJECT(SvRV(sv)))
         return FALSE;
 
-    /* This abuse of gv_fetchmeth_pv() with level = 1 skips the UNIVERSAL
-     * lookup
-     * TODO: Consider if we want a NOUNIVERSAL flag for requesting this in a
-     * more obvious way
-     */
-    isagv = gv_fetchmeth_pvn(SvSTASH(SvRV(sv)), "isa", 3, 1, 0);
+    isagv = gv_fetchmeth_pvn(SvSTASH(SvRV(sv)), "isa", 3, -1, GV_NOUNIVERSAL);
     if(isagv) {
         dSP;
         CV *isacv = isGV(isagv) ? GvCV(isagv) : (CV *)isagv;
@@ -1002,7 +998,7 @@ XS(XS_re_regexp_pattern)
         /* Houston, we have a regex! */
         SV *pattern;
 
-        if ( gimme == G_ARRAY ) {
+        if ( gimme == G_LIST ) {
             STRLEN left = 0;
             char reflags[sizeof(INT_PAT_MODS) + MAX_CHARSET_NAME_LENGTH];
             const char *fptr;
@@ -1049,7 +1045,7 @@ XS(XS_re_regexp_pattern)
         }
     } else {
         /* It ain't a regexp folks */
-        if ( gimme == G_ARRAY ) {
+        if ( gimme == G_LIST ) {
             /* return the empty list */
             XSRETURN_EMPTY;
         } else {
@@ -1070,7 +1066,7 @@ XS(XS_re_regexp_pattern)
     NOT_REACHED; /* NOTREACHED */
 }
 
-#ifdef HAS_GETCWD
+#if defined(HAS_GETCWD) && defined(PERL_IS_MINIPERL)
 
 XS(XS_Internals_getcwd)
 {
@@ -1102,10 +1098,9 @@ XS(XS_NamedCapture_tie_it)
         SV *rv = newSV_type(SVt_IV);
         const char *gv_name = GvNAME(gv);
 
-        SvRV_set(rv, newSVuv(
+        sv_setrv_noinc(rv, newSVuv(
             strEQ(gv_name, "-") || strEQ(gv_name, "\003APTURE_ALL")
             ? RXapif_ALL : RXapif_ONE));
-        SvROK_on(rv);
         sv_bless(rv, GvSTASH(CvGV(cv)));
 
         sv_unmagic((SV *)hv, PERL_MAGIC_tied);
@@ -1279,7 +1274,7 @@ static const struct xsub_details these_details[] = {
     {"re::regnames", XS_re_regnames, ";$", 0 },
     {"re::regnames_count", XS_re_regnames_count, "", 0 },
     {"re::regexp_pattern", XS_re_regexp_pattern, "$", 0 },
-#ifdef HAS_GETCWD
+#if defined(HAS_GETCWD) && defined(PERL_IS_MINIPERL)
     {"Internals::getcwd", XS_Internals_getcwd, "", 0 },
 #endif
     {"Tie::Hash::NamedCapture::_tie_it", XS_NamedCapture_tie_it, NULL, 0 },

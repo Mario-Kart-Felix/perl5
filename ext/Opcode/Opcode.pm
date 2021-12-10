@@ -6,14 +6,13 @@ use strict;
 
 our($VERSION, @ISA, @EXPORT_OK);
 
-$VERSION = "1.49";
+$VERSION = "1.55";
 
 use Carp;
-use Exporter ();
+use Exporter 'import';
 use XSLoader;
 
 BEGIN {
-    @ISA = qw(Exporter);
     @EXPORT_OK = qw(
 	opset ops_to_opset
 	opset_to_ops opset_to_hex invert_opset
@@ -354,6 +353,9 @@ invert_opset function.
 
     cmpchain_and cmpchain_dup
 
+    isbool
+    isweak weaken unweaken
+
     leaveeval -- needed for Safe to operate, is safe
 		 without entereval
 
@@ -415,6 +417,7 @@ These are a hotchpotch of opcodes still waiting to be considered
     once
 
     rv2gv refgen srefgen ref refassign lvref lvrefslice lvavref
+    blessed refaddr reftype
 
     bless -- could be used to change ownership of objects
 	     (reblessing)
@@ -435,11 +438,14 @@ These are a hotchpotch of opcodes still waiting to be considered
     localtime gmtime
 
     entertry leavetry -- can be used to 'hide' fatal errors
+    entertrycatch poptry catch leavetrycatch -- similar
 
     entergiven leavegiven
     enterwhen leavewhen
     break continue
     smartmatch
+
+    pushdefer
 
     custom -- where should this go
 

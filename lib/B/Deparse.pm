@@ -52,7 +52,7 @@ use B qw(class main_root main_start main_cv svref_2object opnumber perlstring
         MDEREF_SHIFT
     );
 
-$VERSION = '1.55';
+$VERSION = '1.60';
 use strict;
 our $AUTOLOAD;
 use warnings ();
@@ -2304,6 +2304,9 @@ my %feature_keywords = (
     evalbytes=>'evalbytes',
     __SUB__ => '__SUB__',
    fc       => 'fc',
+   try      => 'try',
+   catch    => 'try',
+   defer    => 'defer',
 );
 
 # keywords that are strong and also have a prototype
@@ -3951,7 +3954,18 @@ sub loop_common {
 	} else {
 	    $ary = $self->deparse($ary, 1);
 	}
-	if (null $var) {
+        my $iter_targ = $kid->first->first->targ;
+        if ($iter_targ) {
+            # for my ($foo, $bar) () stores the count (less 1) in the targ of
+            # the ITER op.
+            my @vars;
+            my $targ = $enter->targ;
+            while ($iter_targ-- >= 0) {
+                push @vars, $self->padname_sv($targ)->PVX;
+                ++$targ;
+            }
+            $var = 'my (' . join(', ', @vars) . ')';
+        } elsif (null $var) {
             $var = $self->pp_padsv($enter, 1, 1);
 	} elsif ($var->name eq "rv2gv") {
 	    $var = $self->pp_rv2sv($var, 1);
@@ -4053,6 +4067,35 @@ sub for_loop {
 sub pp_leavetry {
     my $self = shift;
     return "eval {\n\t" . $self->pp_leave(@_) . "\n\b}";
+}
+
+sub pp_leavetrycatch {
+    my $self = shift;
+    my ($op) = @_;
+
+    # Expect that the first three kids should be (entertrycatch, poptry, catch)
+    my $entertrycatch = $op->first;
+    $entertrycatch->name eq "entertrycatch" or die "Expected entertrycatch as first child of leavetrycatch";
+
+    my $tryblock = $entertrycatch->sibling;
+    $tryblock->name eq "poptry" or die "Expected poptry as second child of leavetrycatch";
+
+    my $catch = $tryblock->sibling;
+    $catch->name eq "catch" or die "Expected catch as third child of leavetrycatch";
+
+    my $catchblock = $catch->first->sibling;
+    my $name = $catchblock->name;
+    unless ($name eq "scope" || $name eq "leave") {
+      die "Expected scope or leave as second child of catch, got $name instead";
+    }
+
+    my $trycode = scopeop(0, $self, $tryblock);
+    my $catchvar = $self->padname($catch->targ);
+    my $catchcode = $name eq 'scope' ? scopeop(0, $self, $catchblock)
+                                     : scopeop(1, $self, $catchblock);
+
+    return "try {\n\t$trycode\n\b}\n" .
+           "catch($catchvar) {\n\t$catchcode\n\b}\cK";
 }
 
 sub _op_is_or_was {
@@ -5268,7 +5311,7 @@ sub re_unback {
     # the insane complexity here is due to the behaviour of "\c\"
     $str =~ s/
                 # these two lines ensure that the backslash we're about to
-                # remove isn't preceeded by something which makes it part
+                # remove isn't preceded by something which makes it part
                 # of a \c
 
                 (^ | [^\\] | \\c\\)             # $1
@@ -6550,6 +6593,31 @@ sub pp_argdefelem {
     return $expr;
 }
 
+
+sub pp_pushdefer {
+    my $self = shift;
+    my($op, $cx) = @_;
+    # defer block body is stored in the ->first of an OP_NULL that is
+    # ->first of OP_PUSHDEFER
+    my $body = $self->deparse($op->first->first);
+    return "defer {\n\t$body\n\b}\cK";
+}
+
+sub builtin1 {
+    my $self = shift;
+    my ($op, $cx, $name) = @_;
+    my $arg = $self->deparse($op->first);
+    # TODO: work out if lexical alias is present somehow...
+    return "builtin::$name($arg)";
+}
+
+sub pp_isbool   { $_[0]->maybe_targmy(@_[1,2], \&builtin1, "isbool"); }
+sub pp_isweak   { $_[0]->maybe_targmy(@_[1,2], \&builtin1, "isweak"); }
+sub pp_weaken   { builtin1(@_, "weaken"); }
+sub pp_unweaken { builtin1(@_, "unweaken"); }
+sub pp_blessed  { builtin1(@_, "blessed"); }
+sub pp_refaddr  { $_[0]->maybe_targmy(@_[1,2], \&builtin1, "refaddr"); }
+sub pp_reftype  { $_[0]->maybe_targmy(@_[1,2], \&builtin1, "reftype"); }
 
 1;
 __END__

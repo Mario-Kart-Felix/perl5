@@ -309,6 +309,7 @@ sub val_fmt
 {
     my $self = shift;
     my $arg = shift;
+    my $always_hex = shift // 0;    # Use \x{}; don't look for a mnemonic
 
     # Format 'arg' using the printable character if it has one, or a %x if
     # not, returning a string containing the result
@@ -317,7 +318,7 @@ sub val_fmt
     return $hex_fmt unless defined $arg && $arg !~ /\D/;
 
     # We convert only things inside Latin1
-    if ($arg < 256) {
+    if (! $always_hex && $arg < 256) {
 
         # Find the ASCII equivalent of this argument (as the current character
         # set might not be ASCII)
@@ -361,7 +362,11 @@ sub val_fmt
 #
 # Return an object
 
-my %n2a;    # Inversion of a2n, for each character set
+my %a2n;
+my %n2a;        # Inversion of a2n, for each character set
+my %I8_2_utf;
+my %utf_2_I8;   # Inversion of I8_2_utf, for each EBCDIC character set
+my @identity = (0..255);
 
 sub new {
     my $class= shift;
@@ -378,12 +383,21 @@ sub new {
     }, $class;
 
     my $charset = $opt{charset};
-    my $a2n = get_a2n($charset);
+    $a2n{$charset} = get_a2n($charset);
 
-    # We need to construct the map going the other way if not already done
+    # We need to construct the maps going the other way if not already done
     unless (defined $n2a{$charset}) {
         for (my $i = 0; $i < 256; $i++) {
-            $n2a{$charset}->[$a2n->[$i]] = $i;
+            $n2a{$charset}->[$a2n{$charset}->[$i]] = $i;
+        }
+    }
+
+    if ($charset =~ /ebcdic/i) {
+        $I8_2_utf{$charset} = get_I8_2_utf($charset);
+        unless (defined $utf_2_I8{$charset}) {
+            for (my $i = 0; $i < 256; $i++) {
+                $utf_2_I8{$charset}->[$I8_2_utf{$charset}->[$i]] = $i;
+            }
         }
     }
 
@@ -449,11 +463,11 @@ sub new {
             die "Unparsable line: $txt\n";
         }
         my ( $cp, $cp_high, $low, $latin1, $utf8 )
-                                        = __uni_latin1($charset, $a2n, $str );
+                                    = __uni_latin1($charset, $a2n{$charset}, $str );
         my $from;
         if (defined $hash_return{"\"$str\""}) {
             $from = $hash_return{"\"$str\""};
-            $from = $a2n->[$from] if $from < 256;
+            $from = $a2n{$charset}->[$from] if $from < 256;
         }
         my $UTF8= $low   || $utf8;
         my $LATIN1= $low || $latin1;
@@ -1057,17 +1071,21 @@ sub calculate_mask(@) {
 # - merges ranges of conditions, and joins the result with ||
 sub _cond_as_str {
     my ( $self, $op, $combine, $opts_ref )= @_;
-    my $cond= $op->{vals};
+    my @cond = ();
+    @cond = $op->{vals}->@* if defined $op->{vals};
     my $test= $op->{test};
     my $is_cp_ret = $opts_ref->{ret_type} eq "cp";
-    return "( $test )" if !defined $cond;
+    my $charset = $opts_ref->{charset};
+    return "( $test )" unless @cond;
+
+    my (@ranges, @native_ranges);
+    my @native_conds;
 
     # rangify the list.  As we encounter a new value, it is placed in a new
     # subarray by itself.  If the next value is adjacent to it, the end point
     # of the subarray is merely incremented; and so on.  When the next value
     # that isn't adjacent to the previous one is encountered, Update() is
     # called to hoist any single-element subarray to be a scalar.
-    my @ranges;
     my $Update= sub {
         # We skip this if there are optimizations that
         # we can apply (below) to the individual ranges
@@ -1075,46 +1093,185 @@ sub _cond_as_str {
             $ranges[-1] = $ranges[-1][0] if $ranges[-1][0] == $ranges[-1][1];
         }
     };
-    for my $condition ( @$cond ) {
-        if ( !@ranges || $condition != $ranges[-1][1] + 1 ) {
-            # Not adjacent to the existing range.  Remove that from being a
-            # range if only a single value;
-            $Update->();
-            push @ranges, [ $condition, $condition ];
-        } else {    # Adjacent to the existing range; add to the range
-            $ranges[-1][1]++;
+
+    # Parse things twice, using different approaches for representing things,
+    # afterwards choosing the alternative with the fewest branches
+    for my $i (0, 1) {
+
+        # Should we avoid using mnemonics for code points?
+        my $always_hex = 0;
+
+        # The second pass is all about using a transformation to see if it
+        # creates contiguous blocks that lead to fewer ranges or masking.  But
+        # single element ranges don't have any benefit, and so the transform
+        # is just extra work for them.  '$range_test' includes the transform
+        # for multi-element ranges, and '$original' maps a byte back to what
+        # it was without being transformed.  Thus we use '$range_test' and the
+        # transormed bytes on multi-element ranges, and plain '$test' and
+        # '$original' on single ones.  In the first pass these are effectively
+        # no-ops.
+        my $range_test = $test;
+        my $original = \@identity;
+
+        if ($i) {   # 2nd pass
+            # The second pass is only for non-ascii character sets, to see if
+            # a transform to Unicode/ASCII saves anything.
+            last if $charset =~ /ascii/i;
+
+            # If the first pass came up with a single range, we won't be able
+            # to do better than that, so don't try.
+            last if @ranges == 1;
+
+            # We calculated the native values the first iteration
+            @native_ranges = @ranges;
+            @native_conds = @cond;
+
+            # Start fresh
+            undef @ranges;
+            undef @cond;
+
+            # Determine the translation function, to/from UTF-8 or Latin1, and
+            # the corresponding transform of the condition to match
+            my $lookup;
+            if ($opts_ref->{type} =~ / ^ (?: utf8 | high ) $ /xi) {
+                $lookup = $utf_2_I8{$charset};
+                $original = $I8_2_utf{$charset};
+                $range_test = "NATIVE_UTF8_TO_I8($test)";
+            }
+            else {
+                $lookup = $n2a{$charset};
+                $original = $a2n{$charset};
+                $range_test = "NATIVE_TO_LATIN1($test)";
+            }
+
+            # Translate the native conditions (bytes) into the Unicode ones
+            for my $condition (@native_conds) {
+                push @cond, $lookup->[$condition];
+            }
+
+            # 'f' won't be the expected 'f' on this box
+            $always_hex = 1;
         }
-    }
-    $Update->();
 
-    return $self->_combine( $test, @ranges )
-      if $combine;
+        # Go through the code points (@cond) and collapse them as much as
+        # possible into ranges
+        for my $condition ( @cond ) {
+            if ( !@ranges || $condition != $ranges[-1][1] + 1 ) {
+                # Not adjacent to the existing range.  Remove that from being a
+                # range if only a single value;
+                $Update->();
+                push @ranges, [ $condition, $condition ];
+            } else {    # Adjacent to the existing range; add to the range
+                $ranges[-1][1]++;
+            }
+        }
+        $Update->();
 
-    # If the input set has certain characteristics, we can optimize tests
-    # for it.
+        # _combine is used for cp type matching.  By having it here return, no
+        # second pass is done.  It could conceivably be restructured to have a
+        # second pass, but no current uses of script would actually gain any
+        # advantage by doing so, so the work hasn't been further considered.
+        return $self->_combine( $test, @ranges ) if $combine;
 
-    return 1 if @$cond == 256;  # If all bytes match, is trivially true
+        # If the input set has certain characteristics, we can optimize tests
+        # for it.
 
-    my @masks;
-    if (@ranges > 1) {
+        # If all bytes match, is trivially true; we don't need a 2nd pass
+        return 1 if @cond == 256;
 
-        # See if the entire set shares optimizable characteristics, and if so,
-        # return the optimization.  There is no need to do this on sets with
-        # just a single range, as that can be expressed with a single
-        # conditional.
-        @masks = calculate_mask(@$cond);
+        # If this is a single UTF-8 range which includes all possible
+        # continuation bytes, and we aren't checking for well-formedness, this
+        # is trivially true.
+        #
+        # (In EBCDIC, this won't happen until the 2nd pass transforms the
+        # disjoint continuation byte ranges into a single I8 one.)
+        if (     @ranges == 1
+            && ! $opts_ref->{safe}
+            && ! $opts_ref->{no_length_checks}
+            &&   $opts_ref->{type} =~ / ^ (?: utf8 | high ) $ /xi
+            &&   $ranges[0]->[1] == 0xBF
+            &&   $ranges[0]->[0] == (($charset =~ /ascii/i)
+                                        ? 0x80 : 0xA0))
+        {
+            return 1;
+        }
+
+        my $loop_start = 0;
+        if (ref $ranges[0] && $ranges[0]->[0] == 0) {
+
+            # If the first range matches all 256 possible bytes, it is
+            # trivially true.
+            if ($ranges[0]->[1] == 0xFF) {
+                die "Range spanning all bytes must be the only one"
+                                                                if @ranges > 1;
+                return 1;
+            }
+
+            # Here, the first range starts at 0, but doesn't match everything.
+            # But the condition doesn't have to worry about being < 0
+            $ranges[0] = "( $test <= "
+                        . $self->val_fmt($ranges[0]->[1], $always_hex) . " )";
+            $loop_start++;
+        }
+
+        my $loop_end = @ranges;
+        if (   @ranges
+            && ref $ranges[-1]
+            && $ranges[-1]->[1] == 0xFF
+            && $ranges[-1]->[0] != 0xFF)
+        {
+            # If the final range consists of more than one byte ending with
+            # the highest possible one, the condition doesn't have to worry
+            # about being > FF
+            $ranges[-1] = "( $test >= "
+                        . $self->val_fmt($ranges[-1]->[0], $always_hex) . " )";
+            $loop_end--;
+        }
+
+        # Look at each range to see if there any optimizations.  The
+        # formatting may be thrown away, so might be wasted effort; and khw
+        # supposes this could be restructured to delay that until the final
+        # method is chosen.  But that would be more coding work than
+        # warranted, as this is executed not that many times during a
+        # development cycle.
+        for (my $i = $loop_start; $i < $loop_end; $i++) {
+            if (! ref $ranges[$i]) {    # Trivial case: no range
+                $ranges[$i] =
+                    $self->val_fmt($original->[$ranges[$i]], $always_hex)
+                  . " == $test";
+            }
+            elsif ($ranges[$i]->[0] == $ranges[$i]->[1]) {
+                $ranges[$i] =           # Trivial case: single element range
+                     $self->val_fmt($original->[$ranges[$i]->[0]], $always_hex)
+                   . " == $test";
+            }
+            else {
+                $ranges[$i] = "inRANGE_helper_(U8, $range_test, "
+                        . $self->val_fmt($ranges[$i]->[0], $always_hex) .", "
+                        . $self->val_fmt($ranges[$i]->[1], $always_hex) . ")";
+            }
+        }
+
+        # Here, have collapsed the matched code points into ranges.  This code
+        # also sees if some of those different ranges have bit patterns which
+        # causes them to be combinable by ANDing with a mask.  There's no need
+        # to do this if we are already down to a single range.
+        next unless @ranges > 1;
+
+        my @masks = calculate_mask(@cond);
 
         # Stringify the output of calculate_mask()
         if (@masks) {
-            my @return;
+            my @masked;
             foreach my $mask_ref (@masks) {
                 if (defined $mask_ref->[1]) {
-                    push @return, "( ( $test & "
-                                . $self->val_fmt($mask_ref->[1]) . " ) == "
-                                . $self->val_fmt($mask_ref->[0]) . " )";
+                    push @masked, "( ( $range_test & "
+                        . $self->val_fmt($mask_ref->[1], $always_hex) . " ) == "
+                        . $self->val_fmt($mask_ref->[0], $always_hex) . " )";
                 }
                 else {  # An undefined mask means to use the value as-is
-                    push @return, "$test == " . $self->val_fmt($mask_ref->[0]);
+                    push @masked, "$test == "
+                    . $self->val_fmt($original->[$mask_ref->[0]], $always_hex);
                 }
             }
 
@@ -1122,81 +1279,29 @@ sub _cond_as_str {
             # ranges is 1 branch per range.  If our mask method yielded better
             # results, there is no sense trying something that is bound to be
             # worse.
-            if (@return < @ranges) {
-                return "( " . join( " || ", @return ) . " )";
+            if (@masked < @ranges) {
+                @ranges = @masked;
+                next;
             }
 
-            @masks = @return;
+            @masks = @masked;
         }
+
+        # If we found some mask possibilities, and they have fewer
+        # conditionals in them than the plain range method, convert to use the
+        # masks.
+        @ranges = @masks if @masks && @masks < @ranges;
+    }  # End of both passes
+
+    # If the two passes came up with two sets, use the one with the fewest
+    # conditionals (the number of ranges is a proxy for that).  If both have
+    # the same number, prefer the native, as that omits transformations.
+    if (@native_ranges && @native_ranges <= @ranges) {
+        @ranges = @native_ranges;
+        @cond = @native_conds;
     }
 
-    # Here, there was no entire-class optimization that was clearly better
-    # than doing things by ranges.  Look at each range.
-    my $range_count_extra = 0;
-    for (my $i = 0; $i < @ranges; $i++) {
-        if (! ref $ranges[$i]) {    # Trivial case: no range
-            $ranges[$i] = $self->val_fmt($ranges[$i]) . " == $test";
-        }
-        elsif ($ranges[$i]->[0] == $ranges[$i]->[1]) {
-            $ranges[$i] =           # Trivial case: single element range
-                    $self->val_fmt($ranges[$i]->[0]) . " == $test";
-        }
-        elsif ($ranges[$i]->[0] == 0) {
-            # If the range matches all 256 possible bytes, it is trivially
-            # true.
-            return 1 if $ranges[0]->[1] == 0xFF;    # @ranges must be 1 in
-                                                    # this case
-            $ranges[$i] = "( $test <= "
-                        . $self->val_fmt($ranges[$i]->[1]) . " )";
-        }
-        elsif ($ranges[$i]->[1] == 255) {
-
-            # Similarly the max possible is 255, so can omit an upper bound
-            # test if the calculated max is the max possible one.
-            $ranges[$i] = "( $test >= " . $self->val_fmt($ranges[0]->[0]) . " )";
-        }
-        else {
-            my $output = "";
-
-            # Well-formed UTF-8 continuation bytes on ascii platforms must be
-            # in the range 0x80 .. 0xBF.  If we know that the input is
-            # well-formed (indicated by not trying to be 'safe'), we can omit
-            # tests that verify that the input is within either of these
-            # bounds.  (No legal UTF-8 character can begin with anything in
-            # this range, so we don't have to worry about this being a
-            # continuation byte or not.)
-            if ($opts_ref->{charset} =~ /ascii/i
-                && (! $opts_ref->{safe} && ! $opts_ref->{no_length_checks})
-                && $opts_ref->{type} =~ / ^ (?: utf8 | high ) $ /xi)
-            {
-                # If the range is the entire legal range, it matches any legal
-                # byte, so we can omit both tests.  (This should happen only
-                # if the number of ranges is 1.)
-                if ($ranges[$i]->[0] == 0x80 && $ranges[$i]->[1] == 0xBF) {
-                    return 1;
-                }
-            }
-
-            # Here, it isn't the full range of legal continuation bytes.  We
-            # could just assume that there's nothing outside of the legal
-            # bounds.  But inRANGE() allows us to have a single conditional,
-            # so the only cost of making sure it's a legal UTF-8 continuation
-            # byte is an extra subtraction instruction, a trivial expense.
-            $ranges[$i] = "inRANGE_helper_(U8, $test, "
-                        . $self->val_fmt($ranges[$i]->[0]) .", "
-                        . $self->val_fmt($ranges[$i]->[1]) . ")";
-        }
-    }
-
-    # We have generated the list of bytes in two ways; one trying to use masks
-    # to cut the number of branches down, and the other to look at individual
-    # ranges (some of which could be cut down by using a mask for just it).
-    # We return whichever method uses the fewest branches.
-    return "( "
-           . join( " || ", (@masks && @masks < @ranges + $range_count_extra)
-                            ? @masks
-                            : @ranges)
-           . " )";
+    return "( " . join( " || ", @ranges) . " )";
 }
 
 # _combine
@@ -1652,8 +1757,58 @@ NONCHAR: Non character code points
 => UTF8 :safe
 \p{_Perl_Nchar}
 
+SHORTER_NON_CHARS:  # 3 bytes
+=> UTF8 :only_ascii_platform fast
+0xFDD0 - 0xFDEF
+0xFFFE - 0xFFFF
+
+LARGER_NON_CHARS:   # 4 bytes
+=> UTF8 :only_ascii_platform fast
+0x1FFFE - 0x1FFFF
+0x2FFFE - 0x2FFFF
+0x3FFFE - 0x3FFFF
+0x4FFFE - 0x4FFFF
+0x5FFFE - 0x5FFFF
+0x6FFFE - 0x6FFFF
+0x7FFFE - 0x7FFFF
+0x8FFFE - 0x8FFFF
+0x9FFFE - 0x9FFFF
+0xAFFFE - 0xAFFFF
+0xBFFFE - 0xBFFFF
+0xCFFFE - 0xCFFFF
+0xDFFFE - 0xDFFFF
+0xEFFFE - 0xEFFFF
+0xFFFFE - 0xFFFFF
+0x10FFFE - 0x10FFFF
+
+SHORTER_NON_CHARS:  # 4 bytes
+=> UTF8 :only_ebcdic_platform fast
+0xFDD0 - 0xFDEF
+0xFFFE - 0xFFFF
+0x1FFFE - 0x1FFFF
+0x2FFFE - 0x2FFFF
+0x3FFFE - 0x3FFFF
+
+LARGER_NON_CHARS:   # 5 bytes
+=> UTF8 :only_ebcdic_platform fast
+0x4FFFE - 0x4FFFF
+0x5FFFE - 0x5FFFF
+0x6FFFE - 0x6FFFF
+0x7FFFE - 0x7FFFF
+0x8FFFE - 0x8FFFF
+0x9FFFE - 0x9FFFF
+0xAFFFE - 0xAFFFF
+0xBFFFE - 0xBFFFF
+0xCFFFE - 0xCFFFF
+0xDFFFE - 0xDFFFF
+0xEFFFE - 0xEFFFF
+0xFFFFE - 0xFFFFF
+0x10FFFE - 0x10FFFF
+
+# Note that code in utf8.c is counting on the 'fast' version to look at no
+# more than two bytes
 SURROGATE: Surrogate code points
-=> UTF8 :safe
+=> UTF8 :safe fast
 \p{_Perl_Surrogate}
 
 QUOTEMETA: Meta-characters that \Q should quote
@@ -1708,6 +1863,11 @@ PATWS: pattern white space
 => generic : safe
 \p{_Perl_PatWS}
 
-HANGUL_ED: Hangul syllables whose first character is \xED
+HANGUL_ED: Hangul syllables whose first UTF-8 byte is \xED
 => UTF8 :only_ascii_platform safe
 0xD000 - 0xD7FF
+
+HANGUL_ED: Hangul syllables whose first UTF-8 byte is \xED
+=> UTF8 :only_ebcdic_platform safe
+0x1 - 0x0
+# Alows fails on EBCDIC; there are no ED Hanguls there

@@ -181,7 +181,7 @@ Perl_pv_escape( pTHX_ SV *dsv, char const * const str,
     
     for ( ; (pv < end && (!max || (wrote < max))) ; pv += readsize ) {
         const UV u= (isuni) ? utf8_to_uvchr_buf((U8*)pv, (U8*) end, &readsize) : (U8)*pv;
-        const U8 c = (U8)u & 0xFF;
+        const U8 c = (U8)u;
         
         if ( ( u > 255 )
           || (flags & PERL_PV_ESCAPE_ALL)
@@ -686,7 +686,7 @@ Perl_dump_packsubs_perl(pTHX_ const HV *stash, bool justperl)
 
     PERL_ARGS_ASSERT_DUMP_PACKSUBS_PERL;
 
-    if (!HvARRAY(stash))
+    if (!HvTOTALKEYS(stash))
         return;
     for (i = 0; i <= (I32) HvMAX(stash); i++) {
         const HE *entry;
@@ -827,7 +827,7 @@ S_do_pmop_dump_bar(pTHX_ I32 level, UV bar, PerlIO *file, const PMOP *pm)
     else
         S_opdump_indent(aTHX_ (OP*)pm, level, bar, file, "PMf_PRE (RUNTIME)\n");
 
-    if (pm->op_pmflags || (PM_GETRE(pm) && RX_CHECK_SUBSTR(PM_GETRE(pm)))) {
+    if (pm->op_pmflags || PM_GETRE(pm)) {
         SV * const tmpsv = pm_description(pm);
         S_opdump_indent(aTHX_ (OP*)pm, level, bar, file, "PMFLAGS = (%s)\n",
                         SvCUR(tmpsv) ? SvPVX_const(tmpsv) + 1 : "");
@@ -910,8 +910,14 @@ S_pm_description(pTHX_ const PMOP *pm)
             if (RX_EXTFLAGS(regex) & RXf_CHECK_ALL)
                 sv_catpvs(desc, ",ALL");
         }
+        if (RX_EXTFLAGS(regex) & RXf_START_ONLY)
+            sv_catpvs(desc, ",START_ONLY");
         if (RX_EXTFLAGS(regex) & RXf_SKIPWHITE)
             sv_catpvs(desc, ",SKIPWHITE");
+        if (RX_EXTFLAGS(regex) & RXf_WHITE)
+            sv_catpvs(desc, ",WHITE");
+        if (RX_EXTFLAGS(regex) & RXf_NULL)
+            sv_catpvs(desc, ",NULL");
     }
 
     append_flags(desc, pmflags, pmflags_flags_names);
@@ -943,10 +949,10 @@ S_sequence_num(pTHX_ const OP *o)
     key = SvPV_const(op, len);
     if (!PL_op_sequence)
         PL_op_sequence = newHV();
-    seq = hv_fetch(PL_op_sequence, key, len, 0);
-    if (seq)
+    seq = hv_fetch(PL_op_sequence, key, len, TRUE);
+    if (SvOK(*seq))
         return SvUV(*seq);
-    (void)hv_store(PL_op_sequence, key, len, newSVuv(++PL_op_seq), 0);
+    sv_setuv(*seq, ++PL_op_seq);
     return PL_op_seq;
 }
 
@@ -1922,6 +1928,8 @@ Perl_do_sv_dump(pTHX_ I32 level, PerlIO *file, SV *sv, I32 nest, I32 maxnest, bo
                     PerlIO_printf(file, " [UTF8 \"%s\"]",
                                          sv_uni_display(d, sv, 6 * SvCUR(sv),
                                                         UNI_DISPLAY_QQ));
+                if (SvIsBOOL(sv))
+                    PerlIO_printf(file, " [BOOL %s]", ptr == PL_Yes ? "PL_Yes" : "PL_No");
                 PerlIO_printf(file, "\n");
             }
             Perl_dump_indent(aTHX_ level, file, "  CUR = %" IVdf "\n", (IV)SvCUR(sv));
@@ -1993,21 +2001,22 @@ Perl_do_sv_dump(pTHX_ I32 level, PerlIO *file, SV *sv, I32 nest, I32 maxnest, bo
         }
         break;
     case SVt_PVHV: {
-        U32 usedkeys;
+        U32 totalkeys;
         if (SvOOK(sv)) {
             struct xpvhv_aux *const aux = HvAUX(sv);
             Perl_dump_indent(aTHX_ level, file, "  AUX_FLAGS = %" UVuf "\n",
                              (UV)aux->xhv_aux_flags);
         }
         Perl_dump_indent(aTHX_ level, file, "  ARRAY = 0x%" UVxf, PTR2UV(HvARRAY(sv)));
-        usedkeys = HvUSEDKEYS(MUTABLE_HV(sv));
-        if (HvARRAY(sv) && usedkeys) {
+        totalkeys = HvTOTALKEYS(MUTABLE_HV(sv));
+        if (totalkeys) {
             /* Show distribution of HEs in the ARRAY */
             int freq[200];
 #define FREQ_MAX ((int)(C_ARRAY_LENGTH(freq) - 1))
             int i;
             int max = 0;
-            U32 pow2 = 2, keys = usedkeys;
+            U32 pow2 = 2;
+            U32 keys = totalkeys;
             NV theoret, sum = 0;
 
             PerlIO_printf(file, "  (");
@@ -2049,7 +2058,7 @@ Perl_do_sv_dump(pTHX_ I32 level, PerlIO *file, SV *sv, I32 nest, I32 maxnest, bo
             }
             while ((keys = keys >> 1))
                 pow2 = pow2 << 1;
-            theoret = usedkeys;
+            theoret = totalkeys;
             theoret += theoret * (theoret-1)/pow2;
             (void)PerlIO_putc(file, '\n');
             Perl_dump_indent(aTHX_ level, file, "  hash quality = %.1"
@@ -2057,7 +2066,7 @@ Perl_do_sv_dump(pTHX_ I32 level, PerlIO *file, SV *sv, I32 nest, I32 maxnest, bo
         }
         (void)PerlIO_putc(file, '\n');
         Perl_dump_indent(aTHX_ level, file, "  KEYS = %" IVdf "\n",
-                               (IV)usedkeys);
+                               (IV)totalkeys);
         {
             STRLEN count = 0;
             HE **ents = HvARRAY(sv);
@@ -2200,12 +2209,12 @@ Perl_do_sv_dump(pTHX_ I32 level, PerlIO *file, SV *sv, I32 nest, I32 maxnest, bo
         }
         if (nest < maxnest) {
             HV * const hv = MUTABLE_HV(sv);
-            STRLEN i;
-            HE *he;
 
-            if (HvARRAY(hv)) {
+            if (HvTOTALKEYS(hv)) {
+                STRLEN i;
                 int count = maxnest - nest;
                 for (i=0; i <= HvMAX(hv); i++) {
+                    HE *he;
                     for (he = HvARRAY(hv)[i]; he; he = HeNEXT(he)) {
                         U32 hash;
                         SV * keysv;
@@ -2225,8 +2234,15 @@ Perl_do_sv_dump(pTHX_ I32 level, PerlIO *file, SV *sv, I32 nest, I32 maxnest, bo
                             PerlIO_printf(file, "[UTF8 \"%s\"] ", sv_uni_display(d, keysv, 6 * SvCUR(keysv), UNI_DISPLAY_QQ));
                         if (HvEITER_get(hv) == he)
                             PerlIO_printf(file, "[CURRENT] ");
-                        PerlIO_printf(file, "HASH = 0x%" UVxf "\n", (UV) hash);
-                        do_sv_dump(level+1, file, elt, nest+1, maxnest, dumpops, pvlim);
+                        PerlIO_printf(file, "HASH = 0x%" UVxf, (UV) hash);
+
+                        if (sv == (SV*)PL_strtab)
+                            PerlIO_printf(file, " REFCNT = 0x%" UVxf "\n",
+                                (UV)he->he_valu.hent_refcount );
+                        else {
+                            (void)PerlIO_putc(file, '\n');
+                            do_sv_dump(level+1, file, elt, nest+1, maxnest, dumpops, pvlim);
+                        }
                     }
                 }
               DONEHV:;
@@ -3067,7 +3083,7 @@ S_deb_curcv(pTHX_ I32 ix)
 
         if (CxTYPE(cx) == CXt_SUB || CxTYPE(cx) == CXt_FORMAT)
             return cx->blk_sub.cv;
-        else if (CxTYPE(cx) == CXt_EVAL && !CxTRYBLOCK(cx))
+        else if (CxTYPE(cx) == CXt_EVAL && !CxEVALBLOCK(cx))
             return cx->blk_eval.cv;
         else if (ix == 0 && si->si_type == PERLSI_MAIN)
             return PL_main_cv;

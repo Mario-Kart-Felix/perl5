@@ -48,7 +48,7 @@ sub NON_ASCII_PLATFORM { ord("A") != 65 }
 # expected, a warning will be generated.  If an older version is being
 # compiled, any bounds tests that fail in the generated test file (-maketest
 # option) will be marked as TODO.
-my $version_of_mk_invlist_bounds = v13.0.0;
+my $version_of_mk_invlist_bounds = v14.0.0;
 
 ##########################################################################
 #
@@ -698,8 +698,8 @@ my $file_list = 'mktables.lst'; # File to store input and output file names.
                                # nothing on the list has changed since the
                                # previous build
 my $make_list = 1;             # ? Should we write $file_list.  Set to always
-                               # make a list so that when the pumpking is
-                               # preparing a release, s/he won't have to do
+                               # make a list so that when the release manager
+                               # is preparing a release, they won't have to do
                                # special things
 my $glob_list = 0;             # ? Should we try to include unknown .txt files
                                # in the input.
@@ -946,7 +946,7 @@ my %why_obsolete;    # Documentation only
 
 {   # Closure
     my $simple = 'Perl uses the more complete version';
-    my $unihan = 'Unihan properties are by default not enabled in the Perl core.  Instead use CPAN: Unicode::Unihan';
+    my $unihan = 'Unihan properties are by default not enabled in the Perl core.';
 
     my $other_properties = 'other properties';
     my $contributory = "Used by Unicode internally for generating $other_properties and not intended to be used stand-alone";
@@ -1278,14 +1278,10 @@ my $MAP_PROXIED = 1;    # The map table for the property isn't written out,
                         # reconstruct this table
 my $INTERNAL_ONLY = 2;  # The file for this table is written out, but it is
                         # for Perl's internal use only
-my $LEGACY_ONLY = 3;    # Like $INTERNAL_ONLY, but not actually used by Perl.
-                        # Is for backwards compatibility for applications that
-                        # read the file directly, so it's format is
-                        # unchangeable.
-my $SUPPRESSED = 4;     # The file for this table is not written out, and as a
+my $SUPPRESSED = 3;     # The file for this table is not written out, and as a
                         # result, we don't bother to do many computations on
                         # it.
-my $PLACEHOLDER = 5;    # Like $SUPPRESSED, but we go through all the
+my $PLACEHOLDER = 4;    # Like $SUPPRESSED, but we go through all the
                         # computations anyway, as the values are needed for
                         # things to work.  This happens when we have Perl
                         # extensions that depend on Unicode tables that
@@ -1984,7 +1980,7 @@ package main;
                 # than just 'readable_'), then create a subroutine that
                 # assumes the data is an array.  Otherwise just a scalar
                 my $subname = "${package}::${protected}$name";
-                if (grep { /^a/i } @_
+                if (grep { /^a/i } (@accessors)
                     or length($access) > length('readable_'))
                 {
                     no strict "refs";
@@ -2644,7 +2640,7 @@ END
         ".=" => \&main::_operator_dot_equal,
     ;
 
-    sub _operator_stringify($self) {
+    sub _operator_stringify($self, $other="", $reversed=0) {
         return __PACKAGE__ . " object for " . $self->file;
     }
 
@@ -3566,7 +3562,7 @@ sub trace { return main::trace(@_); }
         ".=" => \&main::_operator_dot_equal,
     ;
 
-    sub _operator_stringify($self) {
+    sub _operator_stringify($self, $other="", $reversed=0) {
         my $addr = do { no overloading; pack 'J', $self; };
 
         # Output it like '0041..0065 (value)'
@@ -3723,7 +3719,7 @@ sub trace { return main::trace(@_); }
         ".=" => \&main::_operator_dot_equal,
     ;
 
-    sub _operator_stringify($self) {
+    sub _operator_stringify($self, $other="", $reversed=0) {
         my $addr = do { no overloading; pack 'J', $self; };
 
         return "Range_List attached to '$owner_name_of{$addr}'"
@@ -6511,7 +6507,7 @@ END
                         $next_start = 0;
                         redo;
                     }
-                }
+                } # End of redo block
             } # End of loop through all the table's ranges
 
             push @OUT, @annotation; # Add orphaned annotation, if any
@@ -6717,23 +6713,13 @@ sub trace { return main::trace(@_); }
     main::set_access('anomalous_entries',       # Append singular, read plural
                     \%anomalous_entries,
                     'readable_array');
-
-    my %replacement_property;
-    # Certain files are unused by Perl itself, and are kept only for backwards
-    # compatibility for programs that used them before Unicode::UCD existed.
-    # These are termed legacy properties.  At some point they may be removed,
-    # but for now mark them as legacy.  If non empty, this is the name of the
-    # property to use instead (i.e., the modern equivalent).
-    main::set_access('replacement_property', \%replacement_property, 'r');
-
     my %to_output_map;
     # Enum as to whether or not to write out this map table, and how:
     #   0               don't output
     #   $EXTERNAL_MAP   means its existence is noted in the documentation, and
     #                   it should not be removed nor its format changed.  This
     #                   is done for those files that have traditionally been
-    #                   output.  Maps of legacy-only properties default to
-    #                   this.
+    #                   output.
     #   $INTERNAL_MAP   means Perl reserves the right to do anything it wants
     #                   with this file
     #   $OUTPUT_ADJUSTED means that it is an $INTERNAL_MAP, and instead of
@@ -6758,17 +6744,9 @@ sub trace { return main::trace(@_); }
         my $default_map = delete $args{'Default_Map'};
         my $property = delete $args{'_Property'};
         my $full_name = delete $args{'Full_Name'};
-        my $replacement_property = delete $args{'Replacement_Property'} // "";
         my $to_output_map = delete $args{'To_Output_Map'};
 
-        # Rest of parameters passed on; legacy properties have several common
-        # other attributes
-        if ($replacement_property) {
-            $args{"Fate"} = $LEGACY_ONLY;
-            $args{"Range_Size_1"} = 1;
-            $args{"Perl_Extension"} = 1;
-            $args{"UCD"} = 0;
-        }
+        # Rest of parameters passed on
 
         my $range_list = Range_Map->new(Owner => $property);
 
@@ -6785,9 +6763,6 @@ sub trace { return main::trace(@_); }
 
         $anomalous_entries{$addr} = [];
         $default_map{$addr} = $default_map;
-        $replacement_property{$addr} = $replacement_property;
-        $to_output_map = $EXTERNAL_MAP if ! defined $to_output_map
-                                          && $replacement_property;
         $to_output_map{$addr} = $to_output_map;
 
         $self->initialize($initialize) if defined $initialize;
@@ -6800,8 +6775,7 @@ sub trace { return main::trace(@_); }
         qw("") => "_operator_stringify",
     ;
 
-    sub _operator_stringify {
-        my $self = shift;
+    sub _operator_stringify($self, $other="", $reversed=0) {
 
         my $name = $self->property->full_name;
         $name = '""' if $name eq "";
@@ -6820,7 +6794,7 @@ sub trace { return main::trace(@_); }
 
     sub add_map {
         # Add a range of code points to the list of specially-handled code
-        # points.  $MULTI_CP is assumed if the type of special is not passed
+        # points.  0 is assumed if the type of special is not passed
         # in.
 
         my $self = shift;
@@ -6994,12 +6968,8 @@ sub trace { return main::trace(@_); }
             $return .= $INTERNAL_ONLY_HEADER;
         }
         else {
-            my $property_name = $self->property->replacement_property;
-
-            # The legacy-only properties were gotten above; but there are some
-            # other properties whose files are in current use that have fixed
-            # formats.
-            $property_name = $self->property->full_name unless $property_name;
+            # Other properties have fixed formats.
+            my $property_name = $self->property->full_name;
 
             $return .= <<END;
 
@@ -7087,7 +7057,7 @@ END
         else {
             my $map_to;
             if ($default_map eq "") {
-                $map_to = 'the null string';
+                $map_to = 'the empty string';
             }
             elsif ($default_map eq $CODE_POINT) {
                 $map_to = "itself";
@@ -7434,7 +7404,7 @@ END
             $return .= ' # code point maps to itself';
         }
         elsif ($default_map eq "") {
-            $return .= ' # code point maps to the null string';
+            $return .= ' # code point maps to the empty string';
         }
         $return .= "\n";
 
@@ -7821,8 +7791,7 @@ sub trace { return main::trace(@_); }
                 },
     ;
 
-    sub _operator_stringify {
-        my $self = shift;
+    sub _operator_stringify($self, $other="", $reversed=0) {
 
         my $name = $self->complete_name;
         return "Table '$name'";
@@ -8938,8 +8907,8 @@ sub trace { return main::trace(@_) if main::DEBUG && $to_trace }
         '-=' => "_minus_and_equal",
     ;
 
-    sub _operator_stringify {
-        return "Property '" .  shift->full_name . "'";
+    sub _operator_stringify($self, $other="", $reversed=0) {
+        return "Property '" .  $self->full_name . "'";
     }
 
     sub _minus_and_equal($self, $other, $reversed=0) {
@@ -9108,13 +9077,10 @@ sub trace { return main::trace(@_) if main::DEBUG && $to_trace }
         my $addr = do { no overloading; pack 'J', $self; };
 
         # Swash names are used only on either
-        # 1) legacy-only properties, because the formats for these are
-        #    unchangeable, and they have had these lines in them; or
-        # 2) regular or internal-only map tables
-        # 3) otherwise there should be no access to the
+        # 1) regular or internal-only map tables
+        # 2) otherwise there should be no access to the
         #    property map table from other parts of Perl.
         return if $map{$addr}->fate != $ORDINARY
-                  && $map{$addr}->fate != $LEGACY_ONLY
                   && ! ($map{$addr}->name =~ /^_/
                         && $map{$addr}->fate == $INTERNAL_ONLY);
 
@@ -9381,7 +9347,6 @@ sub trace { return main::trace(@_) if main::DEBUG && $to_trace }
                     initialize
                     inverse_list
                     is_empty
-                    replacement_property
                     name
                     note
                     perl_extension
@@ -9436,7 +9401,7 @@ sub display_chr {
     return "\x{25CC}$chr";
 }
 
-sub join_lines($return) {
+sub join_lines($input) {
     # Returns lines of the input joined together, so that they can be folded
     # properly.
     # This causes continuation lines to be joined together into one long line
@@ -9449,7 +9414,7 @@ sub join_lines($return) {
     # blank is inserted after a period ending a line.
 
     # Initialize the return with the first line.
-    my ( @lines ) = split "\n", $return;
+    my ($return, @lines) = split "\n", $input;
 
     # If the first line is null, it was an empty line, add the \n back in
     $return = "\n" if $return eq "";
@@ -10851,7 +10816,7 @@ sub process_NormalizationsTest($file) {
     } # End of looping through the file
 }
 
-sub output_perl_charnames_line ($a, $b) {
+sub output_perl_charnames_line ($code_point, $name) {
 
     # Output the entries in Perl_charnames specially, using 5 digits instead
     # of four.  This makes the entries a constant length, and simplifies
@@ -10859,7 +10824,7 @@ sub output_perl_charnames_line ($a, $b) {
     # ordinals, but they are all private use or noncharacters which do not
     # have names, so won't be in this table.
 
-    return sprintf "%05X\n%s\n\n", $_[0], $_[1];
+    return sprintf "%05X\n%s\n\n", $code_point, $name;
 }
 
 { # Closure
@@ -12276,26 +12241,6 @@ sub filter_old_style_arabic_shaping {
                 Carp::my_carp_bug("Need to process UnicodeData before SpecialCasing.  Only special casing will be generated.");
             }
 
-            # Create a table in the old-style format and with the original
-            # file name for backwards compatibility with applications that
-            # read it directly.  The new tables contain both the simple and
-            # full maps, and the old are missing simple maps when there is a
-            # conflicting full one.  Probably it would have been ok to add
-            # those to the legacy version, as was already done in 5.14 to the
-            # case folding one, but this was not done, out of an abundance of
-            # caution.  The tables are set up here before we deal with the
-            # full maps so that as we handle those, we can override the simple
-            # maps for them in the legacy table, and merely add them in the
-            # new-style one.
-            my $legacy = Property->new("Legacy_" . $full_casing_full_name,
-                                File => $full_casing_full_name
-                                                          =~ s/case_Mapping//r,
-                                Format => $HEX_FORMAT,
-                                Default_Map => $CODE_POINT,
-                                Initialize => $full_casing_table,
-                                Replacement_Property => $full_casing_full_name,
-            );
-
             $full_casing_table->add_comment(join_lines( <<END
 This file includes both the simple and full case changing maps.  The simple
 ones are in the main body of the table below, and the full ones adding to or
@@ -12411,14 +12356,7 @@ END
             }
             else {
 
-                # The mapping goes into both the legacy table, in which it
-                # replaces the simple one...
-                $file->insert_adjusted_lines("$fields[0]; Legacy_"
-                                             . $object->full_name
-                                             . "; $fields[$i]");
-
-                # ... and the regular table, in which it is additional,
-                # beyond the simple mapping.
+                # The mapping is additional, beyond the simple mapping.
                 $file->insert_adjusted_lines("$fields[0]; "
                                              . $object->name
                                             . "; "
@@ -13707,25 +13645,6 @@ END
     $gc->table('Ll')->set_caseless_equivalent($LC);
     $gc->table('Lu')->set_caseless_equivalent($LC);
 
-    # Create digit and case fold tables with the original file names for
-    # backwards compatibility with applications that read them directly.
-    my $Digit = Property->new("Legacy_Perl_Decimal_Digit",
-                              Default_Map => "",
-                              File => 'Digit',    # Trad. location
-                              Directory => $map_directory,
-                              Type => $STRING,
-                              Replacement_Property => "Perl_Decimal_Digit",
-                              Initialize => property_ref('Perl_Decimal_Digit'),
-                            );
-    $Digit->add_comment(join_lines(<<END
-This file gives the mapping of all code points which represent a single
-decimal digit [0-9] to their respective digits.  For example, the code point
-U+0031 (an ASCII '1') is mapped to a numeric 1.  These code points are those
-that have Numeric_Type=Decimal; not special things, like subscripts nor Roman
-numerals.
-END
-    ));
-
     # Make sure this assumption in perl core code is valid in this Unicode
     # release, with known exceptions
     foreach my $range (property_ref('Numeric-Type')->table('Decimal')->ranges) {
@@ -13737,16 +13656,6 @@ END
                     . " decimal digits.  Code in regcomp.c assumes it does,"
                     . " and will have to be fixed.  Proceeding anyway.");
     }
-
-    Property->new('Legacy_Case_Folding',
-                    File => "Fold",
-                    Directory => $map_directory,
-                    Default_Map => $CODE_POINT,
-                    Type => $STRING,
-                    Replacement_Property => "Case_Folding",
-                    Format => $HEX_FORMAT,
-                    Initialize => property_ref('cf'),
-    );
 
     # Mark the scx table as the parent of the corresponding sc table for those
     # which are identical.  This causes the pod for the script table to refer
@@ -15207,13 +15116,14 @@ END
     # created equivalence class whose name is a combination of the property
     # and the old class name, leaving unchanged everything that doesn't match
     # the non-UCD property.
-    my $pictographic_emoji = property_ref('ExtPict');
-    if (defined $pictographic_emoji) {
+    my $ep = property_ref('ExtPict');
+    $ep = $ep->table('Y') if defined $ep;
+    if (defined $ep) {
         foreach my $base_property (property_ref('GCB'),
                                    property_ref('WB'))
         {
             my $property = property_ref('_Perl_' . $base_property->name);
-            foreach my $range ($pictographic_emoji->table('Y')->ranges) {
+            foreach my $range ($ep->ranges) {
                 foreach my $i ($range->start .. $range->end) {
                     my $current = $property->value_of($i);
                     $current = $property->table($current)->short_name;
@@ -15228,15 +15138,9 @@ END
     # omitted in the default algorithm remapped to what
     # http://www.unicode.org/reports/tr14 says they should be.
     #
-    # Original 	   Resolved  General_Category
-    # AI, SG, XX      AL      Any
-    # SA              CM      Only Mn or Mc
-    # SA              AL      Any except Mn and Mc
-    # CJ              NS      Any
-    #
-    # All property values are also written out in their long form, as
-    # regen/mk_invlist.pl expects that.  This also fixes occurrences of the
-    # typo in early Unicode versions: 'inseperable'.
+    # First, create a plain copy, but with all property values written out in
+    # their long form, as regen/mk_invlist.pl expects that, and also fix
+    # occurrences of the typo in early Unicode versions: 'inseperable'.
     my $perl_lb = property_ref('_Perl_LB');
     if (! defined $perl_lb) {
         $perl_lb = Property->new('_Perl_LB',
@@ -15255,8 +15159,19 @@ END
         }
     }
 
+    # What tr14 says is this:
+
+    # Original 	   Resolved  General_Category
+    # AI, SG, XX      AL      Any
+    # SA              CM      Only Mn or Mc
+    # SA              AL      Any except Mn and Mc
+    # CJ              NS      Any
+
     $perl_lb->set_default_map('Alphabetic', 'full_name');    # XX -> AL
+
     my $ea = property_ref('East_Asian_Width');
+    my $Cn_EP;
+    $Cn_EP = $ep & $gc->table('Unassigned') if defined $ep;
 
     for my $range ($perl_lb->ranges) {
         my $value = standardize($range->value);
@@ -15281,6 +15196,21 @@ END
                 else {
                     $perl_lb->add_map($i, $i, 'Alphabetic',
                                       Replace => $UNCONDITIONALLY);
+                }
+            }
+        }
+        elsif (defined $ep && $value eq standardize('Ideographic')) {
+
+            # Unicode 14 adds a rule to not break lines before any potential
+            # EBase,  They say that any unassigned code point that is ExtPict,
+            # is potentially an EBase.  In 14.0, all such ones are in the
+            # ExtPict=ID category.  We must split that category for the
+            # pairwise rule table to work.
+            for my $i ($range->start .. $range->end) {
+                if ($Cn_EP->contains($i)) {
+                    $perl_lb->add_map($i, $i,
+                                'Unassigned_Extended_Pictographic_Ideographic',
+                                Replace => $UNCONDITIONALLY);
                 }
             }
         }
@@ -16952,7 +16882,7 @@ below briefly mentions other data that Unicode provides.)
 
 Perl can provide access to all non-provisional Unicode character properties,
 though not all are enabled by default.  The omitted ones are the Unihan
-properties (accessible via the CPAN module L<Unicode::Unihan>) and certain
+properties and certain
 deprecated or Unicode-internal properties.  (An installation may choose to
 recompile Perl's tables to change this.  See L</Unicode character
 properties that are NOT accepted by Perl>.)
@@ -17339,6 +17269,11 @@ sub make_Name_pm () {
     my @name = <<END;
 $HEADER
 $INTERNAL_ONLY_HEADER
+
+=head1 NAME -- Internal generated file for use by charnames
+
+=cut
+
 END
 
     # Convert these structures to output format.
@@ -18239,8 +18174,7 @@ sub write_all_tables() {
 
                 # We also create for Unicode::UCD a list of aliases for
                 # the property.  The list starts with the property name;
-                # then its full name.  Legacy properties are not listed in
-                # Unicode::UCD.
+                # then its full name.
                 my @property_list;
                 my @standard_list;
                 if ( $property->fate <= $MAP_PROXIED) {
@@ -20386,7 +20320,7 @@ sub _test_break($template, $break_type) {
             if ($modifier =~ / ^ l (.*) /x) {
                 my $locale = $1;
                 $display_locale = "(locale = $locale)";
-                POSIX::setlocale(&POSIX::LC_CTYPE, $locale);
+                POSIX::setlocale(POSIX::LC_CTYPE(), $locale);
                 $modifier = 'l';
             }
 

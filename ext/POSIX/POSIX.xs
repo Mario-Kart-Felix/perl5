@@ -1,17 +1,6 @@
 #define PERL_EXT_POSIX
 #define PERL_EXT
 
-#ifdef NETWARE
-	#define _POSIX_
-	/*
-	 * Ideally this should be somewhere down in the includes
-	 * but putting it in other places is giving compiler errors.
-	 * Also here I am unable to check for HAS_UNAME since it wouldn't have
-	 * yet come into the file at this stage - sgp 18th Oct 2000
-	 */
-	#include <sys/utsname.h>
-#endif	/* NETWARE */
-
 #define PERL_NO_GET_CONTEXT
 
 #include "EXTERN.h"
@@ -1359,11 +1348,11 @@ static NV_PAYLOAD_TYPE S_getpayload(NV nv)
 #include <fcntl.h>
 
 #ifdef HAS_TZNAME
-#  if !defined(WIN32) && !defined(__CYGWIN__) && !defined(NETWARE) && !defined(__UWIN__)
+#  if !defined(WIN32) && !defined(__CYGWIN__)
 extern char *tzname[];
 #  endif
 #else
-#if !defined(WIN32) && !defined(__UWIN__) || (defined(__MINGW32__) && !defined(tzname))
+#if !defined(WIN32) || (defined(__MINGW32__) && !defined(tzname))
 char *tzname[] = { "" , "" };
 #endif
 #endif
@@ -1383,7 +1372,7 @@ char *tzname[] = { "" , "" };
 #if defined (__CYGWIN__)
 #    define tzname _tzname
 #endif
-#if defined (WIN32) || defined (NETWARE)
+#if defined (WIN32)
 #  undef mkfifo
 #  define mkfifo(a,b) not_here("mkfifo")
 #  define ttyname(a) (char*)not_here("ttyname")
@@ -1410,12 +1399,10 @@ char *tzname[] = { "" , "" };
 #  define sigdelset(a,b)	not_here("sigdelset")
 #  define sigfillset(a)		not_here("sigfillset")
 #  define sigismember(a,b)	not_here("sigismember")
-#ifndef NETWARE
 #  undef setuid
 #  undef setgid
 #  define setuid(a)		not_here("setuid")
 #  define setgid(a)		not_here("setgid")
-#endif	/* NETWARE */
 #if !defined(USE_LONG_DOUBLE) && !defined(USE_QUADMATH)
 #  define strtold(s1,s2)	not_here("strtold")
 #endif  /* !(USE_LONG_DOUBLE) && !(USE_QUADMATH) */
@@ -1444,7 +1431,7 @@ char *tzname[] = { "" , "" };
 #  ifdef I_UTIME
 #    include <utime.h>
 #  endif
-#endif /* WIN32 || NETWARE */
+#endif /* WIN32 */
 #endif /* __VMS */
 
 typedef int SysRet;
@@ -1539,9 +1526,7 @@ END_EXTERN_C
 #define tcsetpgrp(a,b) not_here("tcsetpgrp")
 #endif
 #ifndef HAS_TIMES
-#ifndef NETWARE
 #define times(a) not_here("times")
-#endif	/* NETWARE */
 #endif
 #ifndef HAS_UNAME
 #define uname(a) not_here("uname")
@@ -1678,7 +1663,7 @@ static const struct lconv_offset lconv_integers[] = {
  * in the first place, though. -- Ingo Weinhold
  */
 #if defined(__HAIKU__)
-#    define WMUNGE(x) (((x) & 0xFF00) >> 8 | ((x) & 0x00FF) << 8)
+#    define WMUNGE(x) (((x) & 0xFF00) >> 8 | (((U8) (x)) << 8))
 #else
 #    define WMUNGE(x) (x)
 #endif
@@ -2967,7 +2952,7 @@ sigaction(sig, optaction, oldaction = 0)
 	SV *			optaction
 	POSIX::SigAction	oldaction
     CODE:
-#if defined(WIN32) || defined(NETWARE) || (defined(__amigaos4__) && defined(__NEWLIB__))
+#if defined(WIN32) || (defined(__amigaos4__) && defined(__NEWLIB__))
 	RETVAL = not_here("sigaction");
 #else
 # This code is really grody because we are trying to make the signal
@@ -3505,7 +3490,7 @@ strtod(str)
 	num = strtod(str, &unparsed);
         RESTORE_LC_NUMERIC();
 	PUSHs(sv_2mortal(newSVnv(num)));
-	if (GIMME_V == G_ARRAY) {
+	if (GIMME_V == G_LIST) {
 	    EXTEND(SP, 1);
 	    if (unparsed)
 		PUSHs(sv_2mortal(newSViv(strlen(unparsed))));
@@ -3527,7 +3512,7 @@ strtold(str)
 	num = strtold(str, &unparsed);
         RESTORE_LC_NUMERIC();
 	PUSHs(sv_2mortal(newSVnv(num)));
-	if (GIMME_V == G_ARRAY) {
+	if (GIMME_V == G_LIST) {
 	    EXTEND(SP, 1);
 	    if (unparsed)
 		PUSHs(sv_2mortal(newSViv(strlen(unparsed))));
@@ -3549,11 +3534,11 @@ strtol(str, base = 0)
             num = strtol(str, &unparsed, base);
 #if IVSIZE < LONGSIZE
             if (num < IV_MIN || num > IV_MAX)
-                PUSHs(sv_2mortal(newSVnv((double)num)));
+                PUSHs(sv_2mortal(newSVnv((NV)num)));
             else
 #endif
                 PUSHs(sv_2mortal(newSViv((IV)num)));
-            if (GIMME_V == G_ARRAY) {
+            if (GIMME_V == G_LIST) {
                 EXTEND(SP, 1);
                 if (unparsed)
                     PUSHs(sv_2mortal(newSViv(strlen(unparsed))));
@@ -3563,7 +3548,7 @@ strtol(str, base = 0)
         } else {
 	    SETERRNO(EINVAL, LIB_INVARG);
             PUSHs(&PL_sv_undef);
-            if (GIMME_V == G_ARRAY) {
+            if (GIMME_V == G_LIST) {
                EXTEND(SP, 1);
                PUSHs(&PL_sv_undef);
             }
@@ -3581,13 +3566,13 @@ strtoul(str, base = 0)
 	PERL_UNUSED_VAR(base);
 	if (base == 0 || inRANGE(base, 2, 36)) {
             num = strtoul(str, &unparsed, base);
-#if IVSIZE <= LONGSIZE
-            if (num > IV_MAX)
-                PUSHs(sv_2mortal(newSVnv((double)num)));
+#if UVSIZE < LONGSIZE
+            if (num > UV_MAX)
+                PUSHs(sv_2mortal(newSVnv((NV)num)));
             else
 #endif
-                PUSHs(sv_2mortal(newSViv((IV)num)));
-            if (GIMME_V == G_ARRAY) {
+                PUSHs(sv_2mortal(newSVuv((UV)num)));
+            if (GIMME_V == G_LIST) {
                 EXTEND(SP, 1);
                 if (unparsed)
                     PUSHs(sv_2mortal(newSViv(strlen(unparsed))));
@@ -3597,7 +3582,7 @@ strtoul(str, base = 0)
 	} else {
 	    SETERRNO(EINVAL, LIB_INVARG);
             PUSHs(&PL_sv_undef);
-            if (GIMME_V == G_ARRAY) {
+            if (GIMME_V == G_LIST) {
                EXTEND(SP, 1);
                PUSHs(&PL_sv_undef);
             }

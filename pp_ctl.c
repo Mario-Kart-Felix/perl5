@@ -63,7 +63,7 @@ PP(pp_wantarray)
     }
 
     switch (cx->blk_gimme) {
-    case G_ARRAY:
+    case G_LIST:
         RETPUSHYES;
     case G_SCALAR:
         RETPUSHNO;
@@ -1002,6 +1002,8 @@ PP(pp_grepstart)
     return ((LOGOP*)PL_op->op_next)->op_other;
 }
 
+/* pp_grepwhile() lives in pp_hot.c */
+
 PP(pp_mapwhile)
 {
     dSP;
@@ -1053,7 +1055,7 @@ PP(pp_mapwhile)
         }
         /* copy the new items down to the destination list */
         dst = PL_stack_base + (PL_markstack_ptr[-2] += items) - 1;
-        if (gimme == G_ARRAY) {
+        if (gimme == G_LIST) {
             /* add returned items to the collection (making mortal copies
              * if necessary), then clear the current temps stack frame
              * *except* for those items. We do this splicing the items
@@ -1119,7 +1121,7 @@ PP(pp_mapwhile)
                 dTARGET;
                 XPUSHi(items);
         }
-        else if (gimme == G_ARRAY)
+        else if (gimme == G_LIST)
             SP += items;
         RETURN;
     }
@@ -1146,7 +1148,7 @@ PP(pp_mapwhile)
 PP(pp_range)
 {
     dTARG;
-    if (GIMME_V == G_ARRAY)
+    if (GIMME_V == G_LIST)
         return NORMAL;
     GETTARGET;
     if (SvTRUE_NN(targ))
@@ -1159,7 +1161,7 @@ PP(pp_flip)
 {
     dSP;
 
-    if (GIMME_V == G_ARRAY) {
+    if (GIMME_V == G_LIST) {
         RETURNOP(((LOGOP*)cUNOP->op_first)->op_other);
     }
     else {
@@ -1217,7 +1219,7 @@ PP(pp_flop)
 {
     dSP;
 
-    if (GIMME_V == G_ARRAY) {
+    if (GIMME_V == G_LIST) {
         dPOPPOPssrl;
 
         SvGETMAGIC(left);
@@ -1323,6 +1325,7 @@ static const char * const context_name[] = {
     "format",
     "eval",
     "substitution",
+    "defer block",
 };
 
 STATIC I32
@@ -1335,10 +1338,13 @@ S_dopoptolabel(pTHX_ const char *label, STRLEN len, U32 flags)
     for (i = cxstack_ix; i >= 0; i--) {
         const PERL_CONTEXT * const cx = &cxstack[i];
         switch (CxTYPE(cx)) {
+        case CXt_EVAL:
+            if(CxTRY(cx))
+                continue;
+            /* FALLTHROUGH */
         case CXt_SUBST:
         case CXt_SUB:
         case CXt_FORMAT:
-        case CXt_EVAL:
         case CXt_NULL:
             /* diag_listed_as: Exiting subroutine via %s */
             Perl_ck_warner(aTHX_ packWARN(WARN_EXITING), "Exiting %s via %s",
@@ -1451,8 +1457,15 @@ S_dopoptosub_at(pTHX_ const PERL_CONTEXT *cxstk, I32 startingblock)
              * code block. Hide this faked entry from the world. */
             if (cx->cx_type & CXp_SUB_RE_FAKE)
                 continue;
-            /* FALLTHROUGH */
+            DEBUG_l( Perl_deb(aTHX_ "(dopoptosub_at(): found sub at cx=%ld)\n", (long)i));
+            return i;
+
         case CXt_EVAL:
+            if (CxTRY(cx))
+                continue;
+            DEBUG_l( Perl_deb(aTHX_ "(dopoptosub_at(): found sub at cx=%ld)\n", (long)i));
+            return i;
+
         case CXt_FORMAT:
             DEBUG_l( Perl_deb(aTHX_ "(dopoptosub_at(): found sub at cx=%ld)\n", (long)i));
             return i;
@@ -1485,10 +1498,13 @@ S_dopoptoloop(pTHX_ I32 startingblock)
     for (i = startingblock; i >= 0; i--) {
         const PERL_CONTEXT * const cx = &cxstack[i];
         switch (CxTYPE(cx)) {
+        case CXt_EVAL:
+            if(CxTRY(cx))
+                continue;
+            /* FALLTHROUGH */
         case CXt_SUBST:
         case CXt_SUB:
         case CXt_FORMAT:
-        case CXt_EVAL:
         case CXt_NULL:
             /* diag_listed_as: Exiting subroutine via %s */
             Perl_ck_warner(aTHX_ packWARN(WARN_EXITING), "Exiting %s via %s",
@@ -1607,6 +1623,7 @@ Perl_dounwind(pTHX_ I32 cxix)
             break;
         case CXt_BLOCK:
         case CXt_NULL:
+        case CXt_DEFER:
             /* these two don't have a POPFOO() */
             break;
         case CXt_FORMAT:
@@ -1672,16 +1689,14 @@ S_pop_eval_context_maybe_croak(pTHX_ PERL_CONTEXT *cx, SV *errsv, int action)
     if (do_croak) {
         const char *fmt;
         HV *inc_hv = GvHVn(PL_incgv);
-        I32  klen  = SvUTF8(namesv) ? -(I32)SvCUR(namesv) : (I32)SvCUR(namesv);
-        const char *key = SvPVX_const(namesv);
 
         if (action == 1) {
-            (void)hv_delete(inc_hv, key, klen, G_DISCARD);
+            (void)hv_delete_ent(inc_hv, namesv, G_DISCARD, 0);
             fmt = "%" SVf " did not return a true value";
             errsv = namesv;
         }
         else {
-            (void)hv_store(inc_hv, key, klen, &PL_sv_undef, 0);
+            (void)hv_store_ent(inc_hv, namesv, &PL_sv_undef, 0);
             fmt = "%" SVf "Compilation failed in require";
             if (!errsv)
                 errsv = newSVpvs_flags("Unknown error\n", SVs_TEMP);
@@ -1926,7 +1941,7 @@ PP(pp_caller)
 
     cx = caller_cx(count + !!(PL_op->op_private & OPpOFFBYONE), &dbcx);
     if (!cx) {
-        if (gimme != G_ARRAY) {
+        if (gimme != G_LIST) {
             EXTEND(SP, 1);
             RETPUSHUNDEF;
         }
@@ -1938,7 +1953,7 @@ PP(pp_caller)
     stash_hek = SvTYPE(CopSTASH(cx->blk_oldcop)) == SVt_PVHV
       ? HvNAME_HEK((HV*)CopSTASH(cx->blk_oldcop))
       : NULL;
-    if (gimme != G_ARRAY) {
+    if (gimme != G_LIST) {
         EXTEND(SP, 1);
         if (!stash_hek)
             PUSHs(&PL_sv_undef);
@@ -1986,7 +2001,7 @@ PP(pp_caller)
     if (gimme == G_VOID)
         PUSHs(&PL_sv_undef);
     else
-        PUSHs(boolSV((gimme & G_WANT) == G_ARRAY));
+        PUSHs(boolSV((gimme & G_WANT) == G_LIST));
     if (CxTYPE(cx) == CXt_EVAL) {
         /* eval STRING */
         if (CxOLD_OP_TYPE(cx) == OP_ENTEREVAL) {
@@ -2090,7 +2105,7 @@ PP(pp_dbstate)
     {
         dSP;
         PERL_CONTEXT *cx;
-        const U8 gimme = G_ARRAY;
+        const U8 gimme = G_LIST;
         GV * const gv = PL_DBgv;
         CV * cv = NULL;
 
@@ -2429,7 +2444,7 @@ PP(pp_leavesublv)
             }
         }
         else {
-            assert(gimme == G_ARRAY);
+            assert(gimme == G_LIST);
             assert (!(lval & OPpDEREF));
 
             if (is_lval) {
@@ -2471,10 +2486,16 @@ PP(pp_return)
 {
     dSP; dMARK;
     PERL_CONTEXT *cx;
-    const I32 cxix = dopopto_cursub();
+    I32 cxix = dopopto_cursub();
 
     assert(cxstack_ix >= 0);
     if (cxix < cxstack_ix) {
+        I32 i;
+        /* Check for  defer { return; } */
+        for(i = cxstack_ix; i > cxix; i--) {
+            if(CxTYPE(&cxstack[i]) == CXt_DEFER)
+                Perl_croak(aTHX_ "Can't \"%s\" out of a \"defer\" block", "return");
+        }
         if (cxix < 0) {
             if (!(       PL_curstackinfo->si_type == PERLSI_SORT
                   || (   PL_curstackinfo->si_type == PERLSI_MULTICALL
@@ -2549,7 +2570,7 @@ PP(pp_return)
         if (oldsp != MARK) {
             SSize_t nargs = SP - MARK;
             if (nargs) {
-                if (cx->blk_gimme == G_ARRAY) {
+                if (cx->blk_gimme == G_LIST) {
                     /* shift return args to base of call stack frame */
                     Move(MARK + 1, oldsp + 1, nargs, SV*);
                     PL_stack_sp  = oldsp + nargs;
@@ -2563,7 +2584,7 @@ PP(pp_return)
     /* fall through to a normal exit */
     switch (CxTYPE(cx)) {
     case CXt_EVAL:
-        return CxTRYBLOCK(cx)
+        return CxEVALBLOCK(cx)
             ? Perl_pp_leavetry(aTHX)
             : Perl_pp_leaveeval(aTHX);
     case CXt_SUB:
@@ -2614,8 +2635,15 @@ S_unwind_loop(pTHX)
                                                     label_len,
                                                     label_flags | SVs_TEMP)));
     }
-    if (cxix < cxstack_ix)
+    if (cxix < cxstack_ix) {
+        I32 i;
+        /* Check for  defer { last ... } etc */
+        for(i = cxstack_ix; i > cxix; i--) {
+            if(CxTYPE(&cxstack[i]) == CXt_DEFER)
+                Perl_croak(aTHX_ "Can't \"%s\" out of a \"defer\" block", OP_NAME(PL_op));
+        }
         dounwind(cxix);
+    }
     return &cxstack[cxix];
 }
 
@@ -2766,8 +2794,11 @@ S_dofindlabel(pTHX_ OP *o, const char *label, STRLEN len, U32 flags, OP **opstac
                 first_kid_of_binary = TRUE;
                 ops--;
             }
-            if ((o = dofindlabel(kid, label, len, flags, ops, oplimit)))
+            if ((o = dofindlabel(kid, label, len, flags, ops, oplimit))) {
+                if (kid->op_type == OP_PUSHDEFER)
+                    Perl_croak(aTHX_ "Can't \"goto\" into a \"defer\" block");
                 return o;
+            }
             if (first_kid_of_binary)
                 *ops++ = UNENTERABLE;
         }
@@ -2858,6 +2889,12 @@ PP(pp_goto)
             }
             else if (CxMULTICALL(cx))
                 DIE(aTHX_ "Can't goto subroutine from a sort sub (or similar callback)");
+
+            /* Check for  defer { goto &...; } */
+            for(ix = cxstack_ix; ix > cxix; ix--) {
+                if(CxTYPE(&cxstack[ix]) == CXt_DEFER)
+                    Perl_croak(aTHX_ "Can't \"%s\" out of a \"defer\" block", "goto");
+            }
 
             /* First do some returnish stuff. */
 
@@ -3064,7 +3101,7 @@ PP(pp_goto)
             switch (CxTYPE(cx)) {
             case CXt_EVAL:
                 leaving_eval = TRUE;
-                if (!CxTRYBLOCK(cx)) {
+                if (!CxEVALBLOCK(cx)) {
                     gotoprobe = (last_eval_cx ?
                                 last_eval_cx->blk_eval.old_eval_root :
                                 PL_eval_root);
@@ -3097,6 +3134,8 @@ PP(pp_goto)
             case CXt_FORMAT:
             case CXt_NULL:
                 DIE(aTHX_ "Can't \"goto\" out of a pseudo block");
+            case CXt_DEFER:
+                DIE(aTHX_ "Can't \"%s\" out of a \"defer\" block", "goto");
             default:
                 if (ix)
                     DIE(aTHX_ "panic: goto, type=%u, ix=%ld",
@@ -3245,7 +3284,7 @@ S_save_lines(pTHX_ AV *array, SV *sv)
         else
             t = send;
 
-        sv_setpvn(tmpstr, s, t - s);
+        sv_setpvn_fresh(tmpstr, s, t - s);
         av_store(array, line++, tmpstr);
         s = t;
     }
@@ -3348,7 +3387,7 @@ Perl_find_runcv_where(pTHX_ U8 cond, IV arg, U32 *db_seqp)
                 if (cx->cx_type & CXp_SUB_RE)
                     continue;
             }
-            else if (CxTYPE(cx) == CXt_EVAL && !CxTRYBLOCK(cx))
+            else if (CxTYPE(cx) == CXt_EVAL && !CxEVALBLOCK(cx))
                 cv = cx->blk_eval.cv;
             if (cv) {
                 switch (cond) {
@@ -3572,7 +3611,7 @@ S_doeval_compile(pTHX_ U8 gimme, CV* outside, U32 seq, HV *hh)
         if (!*(SvPV_nolen_const(errsv)))
             sv_setpvs(errsv, "Compilation error");
 
-        if (gimme != G_ARRAY) PUSHs(&PL_sv_undef);
+        if (gimme != G_LIST) PUSHs(&PL_sv_undef);
         PUTBACK;
         return FALSE;
     }
@@ -4034,9 +4073,9 @@ S_require_file(pTHX_ SV *sv)
                         loader = l;
                     }
                     if (sv_isobject(loader))
-                        count = call_method("INC", G_ARRAY);
+                        count = call_method("INC", G_LIST);
                     else
-                        count = call_sv(loader, G_ARRAY);
+                        count = call_sv(loader, G_LIST);
                     SPAGAIN;
 
                     if (count > 0) {
@@ -4593,6 +4632,59 @@ PP(pp_leaveeval)
     return retop;
 }
 
+/* Ops that implement try/catch syntax
+ * Note the asymmetry here:
+ *   pp_entertrycatch does two pushblocks
+ *   pp_leavetrycatch pops only the outer one; the inner one is popped by
+ *     pp_poptry or by stack-unwind of die within the try block
+ */
+
+PP(pp_entertrycatch)
+{
+    PERL_CONTEXT *cx;
+    const U8 gimme = GIMME_V;
+
+    RUN_PP_CATCHABLY(Perl_pp_entertrycatch);
+
+    assert(!CATCH_GET);
+
+    Perl_pp_enter(aTHX); /* performs cx_pushblock(CXt_BLOCK, ...) */
+
+    save_scalar(PL_errgv);
+    CLEAR_ERRSV();
+
+    cx = cx_pushblock((CXt_EVAL|CXp_EVALBLOCK|CXp_TRY), gimme,
+            PL_stack_sp, PL_savestack_ix);
+    cx_pushtry(cx, cLOGOP->op_other);
+
+    PL_in_eval = EVAL_INEVAL;
+
+    return NORMAL;
+}
+
+PP(pp_leavetrycatch)
+{
+    /* leavetrycatch is leave */
+    return Perl_pp_leave(aTHX);
+}
+
+PP(pp_poptry)
+{
+    /* poptry is leavetry */
+    return Perl_pp_leavetry(aTHX);
+}
+
+PP(pp_catch)
+{
+    dTARGET;
+
+    save_clearsv(&(PAD_SVl(PL_op->op_targ)));
+    sv_setsv(TARG, ERRSV);
+    CLEAR_ERRSV();
+
+    return cLOGOP->op_other;
+}
+
 /* Common code for Perl_call_sv and Perl_fold_constants, put here to keep it
    close to the related Perl_create_eval_scope.  */
 void
@@ -4615,7 +4707,7 @@ Perl_create_eval_scope(pTHX_ OP *retop, U32 flags)
     PERL_CONTEXT *cx;
     const U8 gimme = GIMME_V;
         
-    cx = cx_pushblock((CXt_EVAL|CXp_TRYBLOCK), gimme,
+    cx = cx_pushblock((CXt_EVAL|CXp_EVALBLOCK), gimme,
                     PL_stack_sp, PL_savestack_ix);
     cx_pusheval(cx, retop, NULL);
 
@@ -4631,10 +4723,14 @@ Perl_create_eval_scope(pTHX_ OP *retop, U32 flags)
     
 PP(pp_entertry)
 {
+    OP *retop = cLOGOP->op_other->op_next;
+
     RUN_PP_CATCHABLY(Perl_pp_entertry);
 
     assert(!CATCH_GET);
-    create_eval_scope(cLOGOP->op_other->op_next, 0);
+
+    create_eval_scope(retop, 0);
+
     return PL_op->op_next;
 }
 
@@ -4665,7 +4761,7 @@ PP(pp_leavetry)
     CX_LEAVE_SCOPE(cx);
     cx_popeval(cx);
     cx_popblock(cx);
-    retop = cx->blk_eval.retop;
+    retop = CxTRY(cx) ? PL_op->op_next : cx->blk_eval.retop;
     CX_POP(cx);
 
     CLEAR_ERRSV();
@@ -5362,6 +5458,49 @@ PP(pp_break)
     PL_stack_sp = PL_stack_base + cx->blk_oldsp;
 
     return cx->blk_givwhen.leave_op;
+}
+
+static void
+invoke_defer_block(pTHX_ void *_arg)
+{
+    OP *start = (OP *)_arg;
+#ifdef DEBUGGING
+    I32 was_cxstack_ix = cxstack_ix;
+#endif
+
+    cx_pushblock(CXt_DEFER, G_VOID, PL_stack_sp, PL_savestack_ix);
+    ENTER;
+    SAVETMPS;
+
+    SAVEOP();
+    PL_op = start;
+
+    CALLRUNOPS(aTHX);
+
+    FREETMPS;
+    LEAVE;
+
+    {
+        PERL_CONTEXT *cx;
+
+        cx = CX_CUR();
+        assert(CxTYPE(cx) == CXt_DEFER);
+
+        PL_stack_sp = PL_stack_base + cx->blk_oldsp;
+
+        CX_LEAVE_SCOPE(cx);
+        cx_popblock(cx);
+        CX_POP(cx);
+    }
+
+    assert(cxstack_ix == was_cxstack_ix);
+}
+
+PP(pp_pushdefer)
+{
+    SAVEDESTRUCTOR_X(invoke_defer_block, cLOGOP->op_other);
+
+    return NORMAL;
 }
 
 static MAGIC *

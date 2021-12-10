@@ -36,7 +36,6 @@ BEGIN {
 
 use strict;
 use Test::More;
-plan tests => 3904;
 
 use feature (sprintf(":%vd", $^V)); # to avoid relying on the feature
                                     # logic to add CORE::
@@ -87,6 +86,7 @@ sub testit {
             no strict 'vars';
             $code = "sub { state sub $keyword; ${vars}() = $expr }";
             $code = "use feature 'isa';\n$code" if $keyword eq "isa";
+            $code = "use feature 'switch';\n$code" if $keyword eq "break";
             $code_ref = eval $code or die "$@ in $expr";
         }
         else {
@@ -96,6 +96,7 @@ sub testit {
             import subs $keyword;
             $code = "no strict 'vars'; sub { ${vars}() = $expr }";
             $code = "use feature 'isa';\n$code" if $keyword eq "isa";
+            $code = "use feature 'switch';\n$code" if $keyword eq "break";
             $code_ref = eval $code or die "$@ in $expr";
         }
 
@@ -362,7 +363,9 @@ my %not_tested = map { $_ => 1} qw(
     END
     INIT
     UNITCHECK
+    catch
     default
+    defer
     else
     elsif
     for
@@ -381,6 +384,7 @@ my %not_tested = map { $_ => 1} qw(
     require
     s
     tr
+    try
     unless
     until
     use
@@ -429,6 +433,8 @@ SKIP:
     }
     ok($pass, "sanity checks");
 }
+
+done_testing();
 
 __DATA__
 #

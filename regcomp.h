@@ -468,7 +468,7 @@ struct regnode_ssc {
  *      regex is compiled.  In this case, we don't know until runtime what it
  *      will match, so we have to assume it could match anything, including
  *      code points that ordinarily would be in the bitmap.  A flag bit is
- *      necessary to indicate this , though it can be shared with the item 3)
+ *      necessary to indicate this, though it can be shared with the item 3)
  *      flag, as that only occurs under /d, and this only occurs under non-d.
  *      This case is quite uncommon in the field, and the /(?[ ...])/ construct
  *      is a better way to accomplish what this feature does.  This case also
@@ -501,7 +501,7 @@ struct regnode_ssc {
  * Another possibility is based on the fact that ANYOF_MATCHES_POSIXL is
  * redundant with the node type ANYOFPOSIXL.  That flag could be removed, but
  * at the expense of extra code in regexec.c.  The flag has been retained
- * because it allows us to see if we need to call reginsert, or just use the
+ * because it allows us to see if we need to call reginclass, or just use the
  * bitmap in one test.
  *
  * If this is done, an extension would be to make all ANYOFL nodes contain the
@@ -592,7 +592,7 @@ struct regnode_ssc {
  * are cautioned about its shared nature */
 #define ANYOF_SHARED_d_MATCHES_ALL_NON_UTF8_NON_ASCII_non_d_WARN_SUPER 0x80
 
-#define ANYOF_FLAGS_ALL		(0xff & ~0x10)
+#define ANYOF_FLAGS_ALL		((U8) ~0x10)
 
 #define ANYOF_LOCALE_FLAGS (ANYOFL_FOLD | ANYOF_MATCHES_POSIXL)
 
@@ -680,30 +680,32 @@ struct regnode_ssc {
 
 #define ANYOF_BIT(c)		(1U << ((c) & 7))
 
+#define ANYOF_POSIXL_BITMAP(p)  (((regnode_charclass_posixl*) (p))->classflags)
+
 #define POSIXL_SET(field, c)	((field) |= (1U << (c)))
-#define ANYOF_POSIXL_SET(p, c)	POSIXL_SET(((regnode_charclass_posixl*) (p))->classflags, (c))
+#define ANYOF_POSIXL_SET(p, c)	POSIXL_SET(ANYOF_POSIXL_BITMAP(p), (c))
 
 #define POSIXL_CLEAR(field, c) ((field) &= ~ (1U <<(c)))
-#define ANYOF_POSIXL_CLEAR(p, c) POSIXL_CLEAR(((regnode_charclass_posixl*) (p))->classflags, (c))
+#define ANYOF_POSIXL_CLEAR(p, c) POSIXL_CLEAR(ANYOF_POSIXL_BITMAP(p), (c))
 
 #define POSIXL_TEST(field, c)	((field) & (1U << (c)))
-#define ANYOF_POSIXL_TEST(p, c)	POSIXL_TEST(((regnode_charclass_posixl*) (p))->classflags, (c))
+#define ANYOF_POSIXL_TEST(p, c)	POSIXL_TEST(ANYOF_POSIXL_BITMAP(p), (c))
 
 #define POSIXL_ZERO(field)	STMT_START { (field) = 0; } STMT_END
-#define ANYOF_POSIXL_ZERO(ret)	POSIXL_ZERO(((regnode_charclass_posixl*) (ret))->classflags)
+#define ANYOF_POSIXL_ZERO(ret)	POSIXL_ZERO(ANYOF_POSIXL_BITMAP(ret))
 
 #define ANYOF_POSIXL_SET_TO_BITMAP(p, bits)                                 \
-     STMT_START {                                                           \
-                    ((regnode_charclass_posixl*) (p))->classflags = (bits); \
-     } STMT_END
+                STMT_START { ANYOF_POSIXL_BITMAP(p) = (bits); } STMT_END
 
 /* Shifts a bit to get, eg. 0x4000_0000, then subtracts 1 to get 0x3FFF_FFFF */
-#define ANYOF_POSIXL_SETALL(ret) STMT_START { ((regnode_charclass_posixl*) (ret))->classflags = nBIT_MASK(ANYOF_POSIXL_MAX); } STMT_END
+#define ANYOF_POSIXL_SETALL(ret)                                            \
+                STMT_START {                                                \
+                    ANYOF_POSIXL_BITMAP(ret) = nBIT_MASK(ANYOF_POSIXL_MAX); \
+                } STMT_END
 #define ANYOF_CLASS_SETALL(ret) ANYOF_POSIXL_SETALL(ret)
 
 #define ANYOF_POSIXL_TEST_ANY_SET(p)                               \
-        ((ANYOF_FLAGS(p) & ANYOF_MATCHES_POSIXL)                           \
-         && (((regnode_charclass_posixl*)(p))->classflags))
+        ((ANYOF_FLAGS(p) & ANYOF_MATCHES_POSIXL) && ANYOF_POSIXL_BITMAP(p))
 #define ANYOF_CLASS_TEST_ANY_SET(p) ANYOF_POSIXL_TEST_ANY_SET(p)
 
 /* Since an SSC always has this field, we don't have to test for that; nor do
@@ -716,8 +718,7 @@ struct regnode_ssc {
 
 #define ANYOF_POSIXL_TEST_ALL_SET(p)                                   \
         ((ANYOF_FLAGS(p) & ANYOF_MATCHES_POSIXL)                       \
-         && ((regnode_charclass_posixl*) (p))->classflags              \
-                                    == nBIT_MASK(ANYOF_POSIXL_MAX))
+         && ANYOF_POSIXL_BITMAP(p) == nBIT_MASK(ANYOF_POSIXL_MAX))
 
 #define ANYOF_POSIXL_OR(source, dest) STMT_START { (dest)->classflags |= (source)->classflags ; } STMT_END
 #define ANYOF_CLASS_OR(source, dest) ANYOF_POSIXL_OR((source), (dest))
@@ -1121,7 +1122,7 @@ re.pm, especially to the documentation.
  * the defaults if not done already */
 #define DECLARE_AND_GET_RE_DEBUG_FLAGS                                         \
     volatile IV re_debug_flags = 0;  PERL_UNUSED_VAR(re_debug_flags);          \
-    STMT_START {                                                               \
+    DEBUG_r({                              \
         SV * re_debug_flags_sv = NULL;                                         \
                      /* get_sv() can return NULL during global destruction. */ \
         re_debug_flags_sv = PL_curcop ? get_sv(RE_DEBUG_FLAGS, GV_ADD) : NULL; \
@@ -1132,7 +1133,7 @@ re.pm, especially to the documentation.
                             RE_DEBUG_COMPILE_DUMP | RE_DEBUG_EXECUTE_MASK );   \
             re_debug_flags=SvIV(re_debug_flags_sv);                            \
         }                                                                      \
-    } STMT_END
+    })
 
 #define isDEBUG_WILDCARD (DEBUG_v_TEST || RE_DEBUG_FLAG(RE_DEBUG_EXTRA_WILDCARD))
 
@@ -1187,7 +1188,7 @@ typedef enum {
  * gives the strict lower bound for the UTF-8 start byte of any code point
  * matchable by the node, and a loose upper bound as well.
  *
- * The low bound is stored in the upper 6 bits, plus 0xC0.
+ * The low bound is stored as 0xC0 + ((the upper 6 bits) >> 2)
  * The loose upper bound is determined from the lowest 2 bits and the low bound
  * (called x) as follows:
  *

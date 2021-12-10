@@ -3,11 +3,10 @@ use 5.006;
 use strict;
 use warnings;
 use warnings::register;
-our $VERSION = '1.38';
-require Exporter;
+our $VERSION = '1.39_01';
+use Exporter 'import';
 require Cwd;
 
-our @ISA = qw(Exporter);
 our @EXPORT = qw(find finddepth);
 
 
@@ -839,6 +838,9 @@ where C<find()> works from the top of the tree down.
 
 =back
 
+Despite the name of the C<finddepth()> function, both C<find()> and
+C<finddepth()> perform a depth-first search of the directory hierarchy.
+
 =head2 %options
 
 The first argument to C<find()> is either a code reference to your
@@ -848,7 +850,7 @@ code reference is described in L</The wanted function> below.
 
 Here are the possible keys for the hash:
 
-=over 3
+=over 4
 
 =item C<wanted>
 
@@ -892,7 +894,7 @@ This might be expensive both in space and time for a large
 directory tree. See L</follow_fast> and L</follow_skip> below.
 If either I<follow> or I<follow_fast> is in effect:
 
-=over 6
+=over 4
 
 =item *
 
@@ -1079,9 +1081,9 @@ situations. You can disable these warnings by putting the statement
 in the appropriate scope. See L<warnings> for more info about lexical
 warnings.
 
-=head1 CAVEAT
+=head1 BUGS AND CAVEATS
 
-=over 2
+=over 4
 
 =item $dont_use_nlink
 
@@ -1106,12 +1108,6 @@ might cause very unpleasant surprises, since you delete or change files
 in an unknown directory.
 
 =back
-
-=head1 BUGS AND CAVEATS
-
-Despite the name of the C<finddepth()> function, both C<find()> and
-C<finddepth()> perform a depth-first search of the directory
-hierarchy.
 
 =head1 HISTORY
 

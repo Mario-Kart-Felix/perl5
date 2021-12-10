@@ -11,7 +11,7 @@ use Symbol;
 
 our $VERSION;
 BEGIN {
-  $VERSION = '3.42';
+  $VERSION = '3.44';
   require ExtUtils::ParseXS::Constants; ExtUtils::ParseXS::Constants->VERSION($VERSION);
   require ExtUtils::ParseXS::CountLines; ExtUtils::ParseXS::CountLines->VERSION($VERSION);
   require ExtUtils::ParseXS::Utilities; ExtUtils::ParseXS::Utilities->VERSION($VERSION);
@@ -690,10 +690,17 @@ EOF
         do_push     => undef,
       } ) for grep $self->{in_out}->{$_} =~ /OUT$/, sort keys %{ $self->{in_out} };
 
-      my $prepush_done;
+      my $outlist_count = @{ $outlist_ref };
+      if ($outlist_count) {
+        my $ext = $outlist_count;
+        ++$ext if $self->{gotRETVAL} || $wantRETVAL;
+        print "\tXSprePUSH;";
+        print "\tEXTEND(SP,$ext);\n";
+      }
       # all OUTPUT done, so now push the return value on the stack
       if ($self->{gotRETVAL} && $self->{RETVAL_code}) {
         print "\t$self->{RETVAL_code}\n";
+        print "\t++SP;\n" if $outlist_count;
       }
       elsif ($self->{gotRETVAL} || $wantRETVAL) {
         my $outputmap = $self->{typemap}->get_outputmap( ctype => $self->{ret_type} );
@@ -708,8 +715,9 @@ EOF
           );
           if (not $trgt->{with_size} and $trgt->{type} eq 'p') { # sv_setpv
             # PUSHp corresponds to sv_setpvn.  Treat sv_setpv directly
-            print "\tsv_setpv(TARG, $what); XSprePUSH; PUSHTARG;\n";
-            $prepush_done = 1;
+              print "\tsv_setpv(TARG, $what);\n";
+              print "\tXSprePUSH;\n" unless $outlist_count;
+              print "\tPUSHTARG;\n";
           }
           else {
             my $tsize = $trgt->{what_size};
@@ -718,8 +726,8 @@ EOF
               qq("$tsize"),
               {var => $var, type => $self->{ret_type}}
             );
-            print "\tXSprePUSH; PUSH$trgt->{type}($what$tsize);\n";
-            $prepush_done = 1;
+            print "\tXSprePUSH;\n" unless $outlist_count;
+            print "\tPUSH$trgt->{type}($what$tsize);\n";
           }
         }
         else {
@@ -731,15 +739,13 @@ EOF
             do_setmagic => 0,
             do_push     => undef,
           } );
+          print "\t++SP;\n" if $outlist_count;
         }
       }
 
       $xsreturn = 1 if $self->{ret_type} ne "void";
       my $num = $xsreturn;
-      my $c = @{ $outlist_ref };
-      print "\tXSprePUSH;" if $c and not $prepush_done;
-      print "\tEXTEND(SP,$c);\n" if $c;
-      $xsreturn += $c;
+      $xsreturn += $outlist_count;
       $self->generate_output( {
         type        => $self->{var_types}->{$_},
         num         => $num++,
@@ -912,7 +918,7 @@ EOF
   #-Wall: if there is no $self->{Full_func_name} there are no xsubs in this .xs
   #so 'file' is unused
   print Q(<<"EOF") if $self->{Full_func_name};
-##if PERL_VERSION_LT(5, 9, 0)
+##if PERL_VERSION_LE(5, 8, 999) /* PERL_VERSION_LT is 5.33+ */
 #    char* file = __FILE__;
 ##else
 #    const char* file = __FILE__;
@@ -955,7 +961,7 @@ EOF
 
   print Q(<<"EOF") if ($self->{Overload});
 #    /* register the overloading (type 'A') magic */
-##if PERL_VERSION_LT(5, 9, 0)
+##if PERL_VERSION_LE(5, 8, 999) /* PERL_VERSION_LT is 5.33+ */
 #    PL_amagic_generation++;
 ##endif
 #    /* The magic for overload gets a GV* via gv_fetchmeth as */
@@ -1906,7 +1912,7 @@ sub generate_init {
 
   my $inputmap = $typemaps->get_inputmap(xstype => $xstype);
   if (not defined $inputmap) {
-    $self->blurt("Error: No INPUT definition for type '$type', typekind '" . $type->xstype . "' found");
+    $self->blurt("Error: No INPUT definition for type '$type', typekind '$xstype' found");
     return;
   }
 

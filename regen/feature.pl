@@ -40,6 +40,8 @@ my %feature = (
     indirect        => 'indirect',
     multidimensional => 'multidimensional',
     bareword_filehandles => 'bareword_filehandles',
+    try             => 'try',
+    defer           => 'defer',
 );
 
 # NOTE: If a feature is ever enabled in a non-contiguous range of Perl
@@ -54,6 +56,11 @@ use constant V5_11  => sort ( +V5_9_5, qw{unicode_strings} );
 use constant V5_15  => sort ( +V5_11, qw{unicode_eval evalbytes current_sub fc} );
 use constant V5_23  => sort ( +V5_15, qw{postderef_qq} );
 use constant V5_27  => sort ( +V5_23, qw{bitwise} );
+
+use constant V5_35  => sort grep {; $_ ne 'switch'
+                                 && $_ ne 'bareword_filehandles'
+                                 && $_ ne 'indirect'
+                                 && $_ ne 'multidimensional' } +V5_27;
 
 my %feature_bundle = (
     all     => [ sort keys %feature ],
@@ -77,6 +84,8 @@ my %feature_bundle = (
     "5.29"  => [ +V5_27 ],
     "5.31"  => [ +V5_27 ],
     "5.33"  => [ +V5_27 ],
+    # using 5.35 features bundle
+    "5.35"  => [ +V5_35 ],
 );
 
 my @noops = qw( postderef lexical_subs );
@@ -477,7 +486,7 @@ read_only_bottom_close_and_rename($h);
 __END__
 package feature;
 
-our $VERSION = '1.62';
+our $VERSION = '1.69';
 
 FEATURES
 
@@ -490,18 +499,20 @@ feature - Perl pragma to enable new features
 
 =head1 SYNOPSIS
 
-    use feature qw(say switch);
-    given ($foo) {
-        when (1)          { say "\$foo == 1" }
-        when ([2,3])      { say "\$foo == 2 || \$foo == 3" }
-        when (/^a[bc]d$/) { say "\$foo eq 'abd' || \$foo eq 'acd'" }
-        when ($_ > 100)   { say "\$foo > 100" }
-        default           { say "None of the above" }
-    }
+    use feature qw(fc say);
 
-    use feature ':5.10'; # loads all features available in perl 5.10
+    # Without the "use feature" above, this code would not be able to find
+    # the built-ins "say" or "fc":
+    say "The case-folded version of $x is: " . fc $x;
 
-    use v5.10;           # implicitly loads :5.10 feature bundle
+
+    # set features to match the :5.10 bundle, which may turn off or on
+    # multiple features (see below)
+    use feature ':5.10';
+
+
+    # implicitly loads :5.10 feature bundle
+    use v5.10;
 
 =head1 DESCRIPTION
 
@@ -563,9 +574,9 @@ This feature is available starting with Perl 5.10.
 
 =head2 The 'switch' feature
 
-B<WARNING>: Because the L<smartmatch operator|perlop/"Smartmatch Operator"> is
-experimental, Perl will warn when you use this feature, unless you have
-explicitly disabled the warning:
+B<WARNING>: This feature is still experimental and the implementation may
+change or be removed in future versions of Perl.  For this reason, Perl will
+warn when you use the feature, unless you have explicitly disabled the warning:
 
     no warnings "experimental::smartmatch";
 
@@ -612,8 +623,8 @@ couldn't be changed without breaking some things that had come to rely on
 them, so the feature can be enabled and disabled.  Details are at
 L<perlfunc/Under the "unicode_eval" feature>.
 
-C<evalbytes> is like string C<eval>, but operating on a byte stream that is
-not UTF-8 encoded.  Details are at L<perlfunc/evalbytes EXPR>.  Without a
+C<evalbytes> is like string C<eval>, but it treats its argument as a byte
+string. Details are at L<perlfunc/evalbytes EXPR>.  Without a
 S<C<use feature 'evalbytes'>> nor a S<C<use v5.16>> (or higher) declaration in
 the current scope, you can still access it by instead writing
 C<CORE::evalbytes>.
@@ -692,9 +703,8 @@ regardless of what feature declarations are in scope.
 =head2 The 'signatures' feature
 
 B<WARNING>: This feature is still experimental and the implementation may
-change in future versions of Perl.  For this reason, Perl will
-warn when you use the feature, unless you have explicitly disabled the
-warning:
+change or be removed in future versions of Perl.  For this reason, Perl will
+warn when you use the feature, unless you have explicitly disabled the warning:
 
     no warnings "experimental::signatures";
 
@@ -712,9 +722,8 @@ This feature is available from Perl 5.20 onwards.
 =head2 The 'refaliasing' feature
 
 B<WARNING>: This feature is still experimental and the implementation may
-change in future versions of Perl.  For this reason, Perl will
-warn when you use the feature, unless you have explicitly disabled the
-warning:
+change or be removed in future versions of Perl.  For this reason, Perl will
+warn when you use the feature, unless you have explicitly disabled the warning:
 
     no warnings "experimental::refaliasing";
 
@@ -749,9 +758,8 @@ category.
 =head2 The 'declared_refs' feature
 
 B<WARNING>: This feature is still experimental and the implementation may
-change in future versions of Perl.  For this reason, Perl will
-warn when you use the feature, unless you have explicitly disabled the
-warning:
+change or be removed in future versions of Perl.  For this reason, Perl will
+warn when you use the feature, unless you have explicitly disabled the warning:
 
     no warnings "experimental::declared_refs";
 
@@ -763,6 +771,12 @@ Reference to a Variable> for examples.
 This feature is available from Perl 5.26 onwards.
 
 =head2 The 'isa' feature
+
+B<WARNING>: This feature is still experimental and the implementation may
+change or be removed in future versions of Perl.  For this reason, Perl will
+warn when you use the feature, unless you have explicitly disabled the warning:
+
+    no warnings "experimental::isa";
 
 This allows the use of the C<isa> infix operator, which tests whether the
 scalar given by the left operand is an object of the class given by the
@@ -786,8 +800,8 @@ CPAN module.
 
 This feature enables multidimensional array emulation, a perl 4 (or
 earlier) feature that was used to emulate multidimensional arrays with
-hashes.  This works by converting code like C<< $foo{$x, y} >> into
-C<< $foo{join($;, $x, $y} >>.  It is enabled by default, but can be
+hashes.  This works by converting code like C<< $foo{$x, $y} >> into
+C<< $foo{join($;, $x, $y)} >>.  It is enabled by default, but can be
 turned off to disable multidimensional array emulation.
 
 When this feature is disabled the syntax that is normally replaced
@@ -809,11 +823,33 @@ for the exceptions listed below.
 The perl built-in filehandles C<STDIN>, C<STDOUT>, C<STDERR>, C<DATA>,
 C<ARGV>, C<ARGVOUT> and the special C<_> are always enabled.
 
-This feature is enabled under this name from Perl 5.34 onwards.  In
-previous versions it was simply on all the time.
+This behavior was always present in versions before Perl 5.34.  In Perl 5.34,
+it was made controllable with the C<feature> pragma, but was on by default.
+It is not present in the C<:5.36> feature bundle, so C<use v5.36> disables
+this feature.
 
 You can use the L<bareword::filehandles> module on CPAN to disable
 bareword filehandles for older versions of perl.
+
+=head2 The 'try' feature.
+
+B<WARNING>: This feature is still experimental and the implementation may
+change or be removed in future versions of Perl.  For this reason, Perl will
+warn when you use the feature, unless you have explicitly disabled the warning:
+
+    no warnings "experimental::try";
+
+This feature enables the C<try> and C<catch> syntax, which allows exception
+handling, where exceptions thrown from the body of the block introduced with
+C<try> are caught by executing the body of the C<catch> block.
+
+For more information, see L<perlsyn/"Try Catch Exception Handling">.
+
+=head2 The 'defer' feature
+
+This feature enables the C<defer> block syntax, which allows a block of code
+to be deferred until when the flow of control leaves the block which contained
+it. For more details, see L<perlsyn/defer>.
 
 =head1 FEATURE BUNDLES
 
@@ -879,6 +915,76 @@ bundle is automatically loaded instead.
 
 Unlike C<use feature ":5.12">, saying C<use v5.12> (or any higher version)
 also does the equivalent of C<use strict>; see L<perlfunc/use> for details.
+
+=back
+
+=head1 CHECKING FEATURES
+
+C<feature> provides some simple APIs to check which features are enabled.
+
+These functions cannot be imported and must be called by their fully
+qualified names.  If you don't otherwise need to set a feature you will
+need to ensure C<feature> is loaded with:
+
+  use feature ();
+
+=over
+
+=item feature_enabled($feature)
+
+=item feature_enabled($feature, $depth)
+
+  package MyStandardEnforcer;
+  use feature ();
+  use Carp "croak";
+  sub import {
+    croak "disable indirect!" if feature::feature_enabled("indirect");
+  }
+
+Test whether a named feature is enabled at a given level in the call
+stack, returning a true value if it is.  C<$depth> defaults to 1,
+which checks the scope that called the scope calling
+feature::feature_enabled().
+
+croaks for an unknown feature name.
+
+=item features_enabled()
+
+=item features_enabled($depth)
+
+  package ReportEnabledFeatures;
+  use feature "say";
+  sub import {
+    say STDERR join " ", feature::features_enabled();
+  }
+
+Returns a list of the features enabled at a given level in the call
+stack.  C<$depth> defaults to 1, which checks the scope that called
+the scope calling feature::features_enabled().
+
+=item feature_bundle()
+
+=item feature_bundle($depth)
+
+Returns the feature bundle, if any, selected at a given level in the
+call stack.  C<$depth> defaults to 1, which checks the scope that called
+the scope calling feature::feature_bundle().
+
+Returns an undefined value if no feature bundle is selected in the
+scope.
+
+The bundle name returned will be for the earliest bundle matching the
+selected bundle, so:
+
+  use feature ();
+  use v5.12;
+  BEGIN { print feature::feature_bundle(0); }
+
+will print C<5.11>.
+
+This returns internal state, at this point C<use v5.12;> sets the
+feature bundle, but C< use feature ":5.12"; > does not set the feature
+bundle.  This may change in a future release of perl.
 
 =back
 
@@ -969,6 +1075,67 @@ sub unknown_feature_bundle {
 sub croak {
     require Carp;
     Carp::croak(@_);
+}
+
+sub features_enabled {
+    my ($depth) = @_;
+
+    $depth //= 1;
+    my @frame = caller($depth+1)
+      or return;
+    my ($hints, $hinthash) = @frame[8, 10];
+
+    my $bundle_number = $hints & $hint_mask;
+    if ($bundle_number != $hint_mask) {
+        return $feature_bundle{$hint_bundles[$bundle_number >> $hint_shift]}->@*;
+    }
+    else {
+        my @features;
+        for my $feature (sort keys %feature) {
+            if ($hinthash->{$feature{$feature}}) {
+                push @features, $feature;
+            }
+        }
+        return @features;
+    }
+}
+
+sub feature_enabled {
+    my ($feature, $depth) = @_;
+
+    $depth //= 1;
+    my @frame = caller($depth+1)
+      or return;
+    my ($hints, $hinthash) = @frame[8, 10];
+
+    my $hint_feature = $feature{$feature}
+      or croak "Unknown feature $feature";
+    my $bundle_number = $hints & $hint_mask;
+    if ($bundle_number != $hint_mask) {
+        my $bundle = $hint_bundles[$bundle_number >> $hint_shift];
+        for my $bundle_feature ($feature_bundle{$bundle}->@*) {
+            return 1 if $bundle_feature eq $feature;
+        }
+        return 0;
+    }
+    else {
+        return $hinthash->{$hint_feature} // 0;
+    }
+}
+
+sub feature_bundle {
+    my $depth = shift;
+
+    $depth //= 1;
+    my @frame = caller($depth+1)
+      or return;
+    my $bundle_number = $frame[8] & $hint_mask;
+    if ($bundle_number != $hint_mask) {
+        return $hint_bundles[$bundle_number >> $hint_shift];
+    }
+    else {
+        return undef;
+    }
 }
 
 1;

@@ -1,14 +1,12 @@
 package Hash::Util::FieldHash;
 
-use 5.009004;
 use strict;
 use warnings;
 use Scalar::Util qw( reftype);
 
-our $VERSION = '1.21';
+our $VERSION = '1.23';
 
-require Exporter;
-our @ISA = qw(Exporter);
+use Exporter 'import';
 our %EXPORT_TAGS = (
     'all' => [ qw(
         fieldhash

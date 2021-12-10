@@ -110,6 +110,7 @@ Perl_av_extend_guts(pTHX_ AV *av, SSize_t key, SSize_t *maxp, SV ***allocp,
         if (av && *allocp != *arrayp) { /* a shifted SV* array exists */
             to_null = *arrayp - *allocp;
             *maxp += to_null;
+            ary_offset = AvFILLp(av) + 1;
 
             Move(*arrayp, *allocp, AvFILLp(av)+1, SV*);
 
@@ -189,7 +190,8 @@ Perl_av_extend_guts(pTHX_ AV *av, SSize_t key, SSize_t *maxp, SV ***allocp,
             /* Stacks require only the first element to be &PL_sv_undef
              * (set elsewhere). However, since non-stack AVs are likely
              * to dominate in modern production applications, stacks
-             * don't get any special treatment here. */
+             * don't get any special treatment here.
+             * See https://github.com/Perl/perl5/pull/18690 for more detail */
             ary_offset = 0;
             to_null = *maxp+1;
             goto zero;
@@ -389,6 +391,43 @@ Perl_av_store(pTHX_ AV *av, SSize_t key, SV *val)
            mg_set(MUTABLE_SV(av));
     }
     return &ary[key];
+}
+
+/*
+=for apidoc av_new_alloc
+
+Creates a new AV and allocates its SV* array.
+
+This is similar to but more efficient than doing:
+
+    AV *av = newAV();
+    av_extend(av, key);
+
+The size parameter is used to pre-allocate a SV* array large enough to
+hold at least elements 0..(size-1). size must be at least 1.
+
+The zeroflag parameter controls whether the array is NULL initialized.
+
+=cut
+*/
+
+AV *
+Perl_av_new_alloc(pTHX_ SSize_t size, bool zeroflag)
+{
+    AV * const av = newAV();
+    SV** ary;
+    PERL_ARGS_ASSERT_AV_NEW_ALLOC;
+    assert(size > 0);
+
+    Newx(ary, size, SV*); /* Newx performs the memwrap check */
+    AvALLOC(av) = ary;
+    AvARRAY(av) = ary;
+    AvMAX(av) = size - 1;
+
+    if (zeroflag)
+        Zero(ary, size, SV*);
+
+    return av;
 }
 
 /*

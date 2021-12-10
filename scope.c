@@ -972,11 +972,7 @@ Perl_leave_scope(pTHX_ I32 base)
         case SAVEt_SHARED_PVREF:		/* shared pv */
             a0 = ap[0]; a1 = ap[1];
             if (*a0.any_pvp != a1.any_pv) {
-#ifdef NETWARE
-                PerlMem_free(*a0.any_pvp);
-#else
                 PerlMemShared_free(*a0.any_pvp);
-#endif
                 *a0.any_pvp = a1.any_pv;
             }
             break;
@@ -1519,7 +1515,7 @@ Perl_cx_dump(pTHX_ PERL_CONTEXT *cx)
             case G_SCALAR:
                 gimme_text = "SCALAR";
                 break;
-            case G_ARRAY:
+            case G_LIST:
                 gimme_text = "LIST";
                 break;
             default:
@@ -1531,6 +1527,7 @@ Perl_cx_dump(pTHX_ PERL_CONTEXT *cx)
     switch (CxTYPE(cx)) {
     case CXt_NULL:
     case CXt_BLOCK:
+    case CXt_DEFER:
         break;
     case CXt_FORMAT:
         PerlIO_printf(Perl_debug_log, "BLK_FORMAT.CV = 0x%" UVxf "\n",

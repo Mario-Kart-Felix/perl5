@@ -225,8 +225,8 @@ PERLVAR(I, padname_const,	PADNAME)
 
 A scratch pad SV for whatever temporary use you need.  Chiefly used as a
 fallback by macros on platforms where L<perlapi/PERL_USE_GCC_BRACE_GROUPS>> is
-unavailable, and which would otherwise would evaluate their SV parameter more
-than once.
+unavailable, and which would otherwise evaluate their SV parameter more than
+once.
 
 =cut
 */
@@ -722,6 +722,8 @@ PERLVAR(I, padix_floor,	PADOFFSET)	/* how low may inner block reset padix */
  && defined(USE_THREAD_SAFE_LOCALE)         \
  && ! defined(HAS_QUERYLOCALE)
 
+/* This is the most number of categories we've encountered so far on any
+ * platform */
 PERLVARA(I, curlocales, 12, char *)
 
 #endif
@@ -924,12 +926,12 @@ PERLVARI(I, globhook,	globhook_t, NULL)
 #  define PERL_LAST_5_18_0_INTERP_MEMBER	Iglobhook
 #endif
 
-#ifdef PERL_IMPLICIT_CONTEXT
+#ifdef MULTIPLICITY
 PERLVARI(I, my_cxt_list, void **, NULL) /* per-module array of MY_CXT pointers */
 PERLVARI(I, my_cxt_size, int,	0)	/* size of PL_my_cxt_list */
 #endif
 
-#if defined(PERL_IMPLICIT_CONTEXT) || defined(PERL_DEBUG_READONLY_COW)
+#if defined(MULTIPLICITY) || defined(PERL_DEBUG_READONLY_COW)
 /* For use with the memory debugging code in util.c. This is used only in
  * DEBUGGING builds (as long as the relevant structure is defined), but
  * defining it in non-debug builds too means that we retain binary

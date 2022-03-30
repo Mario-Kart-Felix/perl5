@@ -37,7 +37,7 @@ INST_TOP	= $(INST_DRV)\perl
 # versioned installation can be obtained by setting INST_TOP above to a
 # path that includes an arbitrary version string.
 #
-#INST_VER	= \5.35.7
+#INST_VER	= \5.35.11
 
 #
 # Comment this out if you DON'T want your perl installation to have
@@ -110,6 +110,8 @@ DEFAULT_INC_EXCLUDES_DOT = define
 #CCTYPE		= MSVC141
 # Visual C++ 2019 (aka Visual C++ 14.2) (full version or Community Edition)
 #CCTYPE		= MSVC142
+# Visual C++ 2022 (aka Visual C++ 14.3) (full version or Community Edition)
+#CCTYPE		= MSVC143
 
 #
 # If you are using Intel C++ Compiler uncomment this
@@ -821,6 +823,7 @@ CFG_VARS	=					\
 		"usemultiplicity=$(USE_MULTI)"		\
 		"use64bitint=$(USE_64_BIT_INT)"		\
 		"uselongdouble=undef"			\
+		"usequadmath=undef"			    \
 		"usesitecustomize=$(USE_SITECUST)"	\
 		"default_inc_excludes_dot=$(DEFAULT_INC_EXCLUDES_DOT)"	\
 		"LINK_FLAGS=$(LINK_FLAGS:"=\")"		\
@@ -1149,7 +1152,7 @@ utils: $(PERLEXE) ..\utils\Makefile
 	copy ..\README.tw       ..\pod\perltw.pod
 	copy ..\README.vos      ..\pod\perlvos.pod
 	copy ..\README.win32    ..\pod\perlwin32.pod
-	copy ..\pod\perldelta.pod ..\pod\perl5357delta.pod
+	copy ..\pod\perldelta.pod ..\pod\perl53511delta.pod
 	cd ..\win32
 	$(PERLEXE) $(PL2BAT) $(UTILS)
 	$(MINIPERL) -I..\lib ..\autodoc.pl ..
@@ -1249,7 +1252,7 @@ distclean: realclean
 	-if exist $(LIBDIR)\Win32API rmdir /s /q $(LIBDIR)\Win32API
 	-if exist $(LIBDIR)\XS rmdir /s /q $(LIBDIR)\XS
 	-cd $(PODDIR) && del /f *.html *.bat roffitall \
-	    perl5357delta.pod perlaix.pod perlamiga.pod perlandroid.pod \
+	    perl53511delta.pod perlaix.pod perlamiga.pod perlandroid.pod \
 	    perlapi.pod perlbs2000.pod perlcn.pod perlcygwin.pod \
 	    perlfreebsd.pod perlhaiku.pod perlhpux.pod perlhurd.pod \
 	    perlintern.pod perlirix.pod perljp.pod perlko.pod perllinux.pod \

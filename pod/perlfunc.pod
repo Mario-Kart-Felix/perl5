@@ -4622,6 +4622,7 @@ filehandle. These affect how the input and output are processed (see
 L<open> and
 L<PerlIO> for more details).  For example:
 
+    # loads PerlIO::encoding automatically
     open(my $fh, "<:encoding(UTF-8)", $filename)
         || die "Can't open UTF-8 encoded $filename: $!";
 
@@ -5247,7 +5248,10 @@ of values, as follows:
     u  A uuencoded string.
     U  A Unicode character number.  Encodes to a character in char-
        acter mode and UTF-8 (or UTF-EBCDIC in EBCDIC platforms) in
-       byte mode.
+       byte mode.  Also on EBCDIC platforms, the character number will
+       be the native EBCDIC value for character numbers below 256.
+       This allows most programs using this feature to not have to
+       care which type of platform they are running on.
 
     w  A BER compressed integer (not an ASN.1 BER, see perlpacktut
        for details).  Its bytes represent an unsigned integer in
@@ -7676,6 +7680,14 @@ Examples:
                                              # not set here
     package main;
     my @new = sort Other::backwards @old;
+
+    ## using a prototype with function signature
+    use feature 'signatures';
+    sub function_with_signature :prototype($$) ($one, $two) {
+        return $one <=> $two
+    }
+
+    my @new = sort function_with_signature @old;
 
     # guarantee stability
     use sort 'stable';

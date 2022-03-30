@@ -877,7 +877,7 @@ Perl_sv_string_from_errnum(pTHX_ int errnum, SV *tgtsv)
 {
     char const *errstr;
     if(!tgtsv)
-        tgtsv = sv_newmortal();
+        tgtsv = newSV_type_mortal(SVt_PV);
     errstr = my_strerror(errnum);
     if(errstr) {
         sv_setpv(tgtsv, errstr);
@@ -3367,6 +3367,16 @@ Perl_magic_set(pTHX_ SV *sv, MAGIC *mg)
         else sv_setiv(mg->mg_obj, (IV)PerlProc_getpid());
         break;
     case '0':
+        if (!sv_utf8_downgrade(sv, /* fail_ok */ TRUE)) {
+
+            /* Since we are going to set the string's UTF8-encoded form
+               as the process name we should update $0 itself to contain
+               that same (UTF8-encoded) value. */
+            sv_utf8_encode(GvSV(mg->mg_obj));
+
+            Perl_ck_warner_d(aTHX_ packWARN(WARN_UTF8), "Wide character in %s", "$0");
+        }
+
         LOCK_DOLLARZERO_MUTEX;
         S_set_dollarzero(aTHX_ sv);
         UNLOCK_DOLLARZERO_MUTEX;

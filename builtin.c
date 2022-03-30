@@ -23,10 +23,20 @@ struct BuiltinFuncDescriptor {
     IV ckval;
 };
 
+#define warn_experimental_builtin(name, prefix) S_warn_experimental_builtin(aTHX_ name, prefix)
+static void S_warn_experimental_builtin(pTHX_ const char *name, bool prefix)
+{
+    /* diag_listed_as: Built-in function '%s' is experimental */
+    Perl_ck_warner_d(aTHX_ packWARN(WARN_EXPERIMENTAL__BUILTIN),
+                     "Built-in function '%s%s' is experimental",
+                     prefix ? "builtin::" : "", name);
+}
+
 XS(XS_builtin_true);
 XS(XS_builtin_true)
 {
     dXSARGS;
+    warn_experimental_builtin("true", true);
     if(items)
         croak_xs_usage(cv, "");
     XSRETURN_YES;
@@ -36,6 +46,7 @@ XS(XS_builtin_false);
 XS(XS_builtin_false)
 {
     dXSARGS;
+    warn_experimental_builtin("false", true);
     if(items)
         croak_xs_usage(cv, "");
     XSRETURN_NO;
@@ -50,6 +61,8 @@ static OP *ck_builtin_const(pTHX_ OP *entersubop, GV *namegv, SV *ckobj)
 {
     const struct BuiltinFuncDescriptor *builtin = NUM2PTR(const struct BuiltinFuncDescriptor *, SvUV(ckobj));
 
+    warn_experimental_builtin(builtin->name, false);
+
     SV *prototype = newSVpvs("");
     SAVEFREESV(prototype);
 
@@ -62,7 +75,8 @@ static OP *ck_builtin_const(pTHX_ OP *entersubop, GV *namegv, SV *ckobj)
         case BUILTIN_CONST_FALSE: constval = &PL_sv_no; break;
         case BUILTIN_CONST_TRUE:  constval = &PL_sv_yes; break;
         default:
-            DIE(aTHX_ "panic: unrecognised builtin_const value %" IVdf, builtin->ckval);
+            DIE(aTHX_ "panic: unrecognised builtin_const value %" IVdf,
+                      builtin->ckval);
             break;
     }
 
@@ -77,16 +91,18 @@ XS(XS_builtin_func1_scalar)
     dXSARGS;
     dXSI32;
 
+    warn_experimental_builtin(PL_op_name[ix], true);
+
     if(items != 1)
         croak_xs_usage(cv, "arg");
 
     switch(ix) {
-        case OP_ISBOOL:
-            Perl_pp_isbool(aTHX);
+        case OP_IS_BOOL:
+            Perl_pp_is_bool(aTHX);
             break;
 
-        case OP_ISWEAK:
-            Perl_pp_isweak(aTHX);
+        case OP_IS_WEAK:
+            Perl_pp_is_weak(aTHX);
             break;
 
         case OP_BLESSED:
@@ -101,9 +117,112 @@ XS(XS_builtin_func1_scalar)
             Perl_pp_reftype(aTHX);
             break;
 
+        case OP_CEIL:
+            Perl_pp_ceil(aTHX);
+            break;
+
+        case OP_FLOOR:
+            Perl_pp_floor(aTHX);
+            break;
+
         default:
-            Perl_die(aTHX_ "panic: unhandled opcode %d for xs_builtin_func1_scalar()", ix);
+            Perl_die(aTHX_ "panic: unhandled opcode %" IVdf
+                           " for xs_builtin_func1_scalar()", (IV) ix);
     }
+
+    XSRETURN(1);
+}
+
+XS(XS_builtin_trim);
+XS(XS_builtin_trim)
+{
+    dXSARGS;
+
+    warn_experimental_builtin("trim", true);
+
+    if (items != 1) {
+        croak_xs_usage(cv, "arg");
+    }
+
+    dTARGET;
+    SV *source = TOPs;
+    STRLEN len;
+    const U8 *start;
+    SV *dest;
+
+    SvGETMAGIC(source);
+
+    if (SvOK(source))
+        start = (const U8*)SvPV_nomg_const(source, len);
+    else {
+        if (ckWARN(WARN_UNINITIALIZED))
+            report_uninit(source);
+        start = (const U8*)"";
+        len = 0;
+    }
+
+    if (DO_UTF8(source)) {
+        const U8 *end = start + len;
+
+        /* Find the first non-space */
+        while(len) {
+            STRLEN thislen;
+            if (!isSPACE_utf8_safe(start, end))
+                break;
+            start += (thislen = UTF8SKIP(start));
+            len -= thislen;
+        }
+
+        /* Find the final non-space */
+        STRLEN thislen;
+        const U8 *cur_end = end;
+        while ((thislen = is_SPACE_utf8_safe_backwards(cur_end, start))) {
+            cur_end -= thislen;
+        }
+        len -= (end - cur_end);
+    }
+    else if (len) {
+        while(len) {
+            if (!isSPACE_L1(*start))
+                break;
+            start++;
+            len--;
+        }
+
+        while(len) {
+            if (!isSPACE_L1(start[len-1]))
+                break;
+            len--;
+        }
+    }
+
+    dest = TARG;
+
+    if (SvPOK(dest) && (dest == source)) {
+        sv_chop(dest, (const char *)start);
+        SvCUR_set(dest, len);
+    }
+    else {
+        SvUPGRADE(dest, SVt_PV);
+        SvGROW(dest, len + 1);
+
+        Copy(start, SvPVX(dest), len, U8);
+        SvPVX(dest)[len] = '\0';
+        SvPOK_on(dest);
+        SvCUR_set(dest, len);
+
+        if (DO_UTF8(source))
+            SvUTF8_on(dest);
+        else
+            SvUTF8_off(dest);
+
+        if (SvTAINTED(source))
+            SvTAINT(dest);
+    }
+
+    SvSETMAGIC(dest);
+
+    SETs(dest);
 
     XSRETURN(1);
 }
@@ -113,6 +232,8 @@ XS(XS_builtin_func1_void)
 {
     dXSARGS;
     dXSI32;
+
+    warn_experimental_builtin(PL_op_name[ix], true);
 
     if(items != 1)
         croak_xs_usage(cv, "arg");
@@ -127,7 +248,8 @@ XS(XS_builtin_func1_void)
             break;
 
         default:
-            Perl_die(aTHX_ "panic: unhandled opcode %d for xs_builtin_func1_void()", ix);
+            Perl_die(aTHX_ "panic: unhandled opcode %" IVdf
+                           " for xs_builtin_func1_void()", (IV) ix);
     }
 
     XSRETURN(0);
@@ -136,6 +258,8 @@ XS(XS_builtin_func1_void)
 static OP *ck_builtin_func1(pTHX_ OP *entersubop, GV *namegv, SV *ckobj)
 {
     const struct BuiltinFuncDescriptor *builtin = NUM2PTR(const struct BuiltinFuncDescriptor *, SvUV(ckobj));
+
+    warn_experimental_builtin(builtin->name, false);
 
     SV *prototype = newSVpvs("$");
     SAVEFREESV(prototype);
@@ -167,6 +291,55 @@ static OP *ck_builtin_func1(pTHX_ OP *entersubop, GV *namegv, SV *ckobj)
     return newUNOP(opcode, wantflags, argop);
 }
 
+XS(XS_builtin_indexed)
+{
+    dXSARGS;
+
+    switch(GIMME_V) {
+        case G_VOID:
+            Perl_ck_warner(aTHX_ packWARN(WARN_VOID),
+                "Useless use of %s in void context", "builtin::indexed");
+            XSRETURN(0);
+
+        case G_SCALAR:
+            Perl_ck_warner(aTHX_ packWARN(WARN_SCALAR),
+                "Useless use of %s in scalar context", "builtin::indexed");
+            ST(0) = sv_2mortal(newSViv(items * 2));
+            XSRETURN(1);
+
+        case G_LIST:
+            break;
+    }
+
+    SSize_t retcount = items * 2;
+    EXTEND(SP, retcount);
+
+    /* Copy from [items-1] down to [0] so we don't have to make
+     * temporary copies */
+    for(SSize_t index = items - 1; index >= 0; index--) {
+        /* Copy, not alias */
+        ST(index * 2 + 1) = sv_mortalcopy(ST(index));
+        ST(index * 2)     = sv_2mortal(newSViv(index));
+    }
+
+    XSRETURN(retcount);
+}
+
+static OP *ck_builtin_funcN(pTHX_ OP *entersubop, GV *namegv, SV *ckobj)
+{
+    const struct BuiltinFuncDescriptor *builtin = NUM2PTR(const struct BuiltinFuncDescriptor *, SvUV(ckobj));
+
+    warn_experimental_builtin(builtin->name, false);
+
+    SV *prototype = newSVpvs("@");
+    SAVEFREESV(prototype);
+
+    assert(entersubop->op_type == OP_ENTERSUB);
+
+    entersubop = ck_entersub_args_proto(entersubop, namegv, prototype);
+    return entersubop;
+}
+
 static const char builtin_not_recognised[] = "'%" SVf "' is not recognised as a builtin function";
 
 static const struct BuiltinFuncDescriptor builtins[] = {
@@ -175,13 +348,19 @@ static const struct BuiltinFuncDescriptor builtins[] = {
     { "builtin::false",  &XS_builtin_false,  &ck_builtin_const, BUILTIN_CONST_FALSE },
 
     /* unary functions */
-    { "builtin::isbool",   &XS_builtin_func1_scalar, &ck_builtin_func1, OP_ISBOOL   },
+    { "builtin::is_bool",  &XS_builtin_func1_scalar, &ck_builtin_func1, OP_IS_BOOL  },
     { "builtin::weaken",   &XS_builtin_func1_void,   &ck_builtin_func1, OP_WEAKEN   },
     { "builtin::unweaken", &XS_builtin_func1_void,   &ck_builtin_func1, OP_UNWEAKEN },
-    { "builtin::isweak",   &XS_builtin_func1_scalar, &ck_builtin_func1, OP_ISWEAK   },
+    { "builtin::is_weak",  &XS_builtin_func1_scalar, &ck_builtin_func1, OP_IS_WEAK  },
     { "builtin::blessed",  &XS_builtin_func1_scalar, &ck_builtin_func1, OP_BLESSED  },
     { "builtin::refaddr",  &XS_builtin_func1_scalar, &ck_builtin_func1, OP_REFADDR  },
     { "builtin::reftype",  &XS_builtin_func1_scalar, &ck_builtin_func1, OP_REFTYPE  },
+    { "builtin::ceil",     &XS_builtin_func1_scalar, &ck_builtin_func1, OP_CEIL     },
+    { "builtin::floor",    &XS_builtin_func1_scalar, &ck_builtin_func1, OP_FLOOR    },
+    { "builtin::trim",     &XS_builtin_trim, NULL, 0 },
+
+    /* list functions */
+    { "builtin::indexed", &XS_builtin_indexed, &ck_builtin_funcN, 0 },
     { 0 }
 };
 
@@ -192,7 +371,7 @@ XS(XS_builtin_import)
 
     if(!PL_compcv)
         Perl_croak(aTHX_
-                "builtin::import can only be called at compiletime");
+                "builtin::import can only be called at compile time");
 
     /* We need to have PL_comppad / PL_curpad set correctly for lexical importing */
     ENTER;

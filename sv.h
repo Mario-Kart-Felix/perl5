@@ -176,6 +176,7 @@ typedef enum {
 /* The array of arena roots for SV bodies is indexed by SvTYPE. SVt_NULL doesn't
  * use a body, so that arena root is re-used for HEs. SVt_IV also doesn't, so
  * that arena root is used for HVs with struct xpvhv_aux. */
+
 #if defined(PERL_IN_HV_C) || defined(PERL_IN_XS_APITEST)
 #  define HE_ARENA_ROOT_IX      SVt_NULL
 #endif
@@ -1859,19 +1860,30 @@ scalar.
 #define SvPV_const(sv, len)   SvPV_flags_const(sv, len, SV_GMAGIC)
 #define SvPV_mutable(sv, len) SvPV_flags_mutable(sv, len, SV_GMAGIC)
 
+/* This test is "is there a cached PV that we can use directly?"
+ * We can if
+ * a) SVf_POK is true and there's definitely no get magic on the scalar
+ * b) SVp_POK is true, there's no get magic, and we know that the cached PV
+ *    came from an IV conversion.
+ * For the latter case, we don't set SVf_POK so that we can distinguish whether
+ * the value originated as a string or as an integer, before we cached the
+ * second representation. */
+#define SvPOK_or_cached_IV(sv) \
+    (((SvFLAGS(sv) & (SVf_POK|SVs_GMG)) == SVf_POK) || ((SvFLAGS(sv) & (SVf_IOK|SVp_POK|SVs_GMG)) == (SVf_IOK|SVp_POK)))
+
 #define SvPV_flags(sv, len, flags) \
-    (SvPOK_nog(sv) \
+    (SvPOK_or_cached_IV(sv) \
      ? ((len = SvCUR(sv)), SvPVX(sv)) : sv_2pv_flags(sv, &len, flags))
 #define SvPV_flags_const(sv, len, flags) \
-    (SvPOK_nog(sv) \
+    (SvPOK_or_cached_IV(sv) \
      ? ((len = SvCUR(sv)), SvPVX_const(sv)) : \
      (const char*) sv_2pv_flags(sv, &len, (flags|SV_CONST_RETURN)))
 #define SvPV_flags_const_nolen(sv, flags) \
-    (SvPOK_nog(sv) \
+    (SvPOK_or_cached_IV(sv) \
      ? SvPVX_const(sv) : \
      (const char*) sv_2pv_flags(sv, 0, (flags|SV_CONST_RETURN)))
 #define SvPV_flags_mutable(sv, len, flags) \
-    (SvPOK_nog(sv) \
+    (SvPOK_or_cached_IV(sv) \
      ? ((len = SvCUR(sv)), SvPVX_mutable(sv)) : \
      sv_2pv_flags(sv, &len, (flags|SV_MUTABLE_RETURN)))
 
@@ -1896,16 +1908,16 @@ scalar.
      : sv_pvn_force_flags(sv, &len, flags|SV_MUTABLE_RETURN))
 
 #define SvPV_nolen(sv) \
-    (SvPOK_nog(sv) \
+    (SvPOK_or_cached_IV(sv) \
      ? SvPVX(sv) : sv_2pv_flags(sv, 0, SV_GMAGIC))
 
 /* "_nomg" in these defines means no mg_get() */
 #define SvPV_nomg_nolen(sv) \
-    (SvPOK_nog(sv) \
+    (SvPOK_or_cached_IV(sv) \
      ? SvPVX(sv) : sv_2pv_flags(sv, 0, 0))
 
 #define SvPV_nolen_const(sv) \
-    (SvPOK_nog(sv) \
+    (SvPOK_or_cached_IV(sv) \
      ? SvPVX_const(sv) : sv_2pv_flags(sv, 0, SV_GMAGIC|SV_CONST_RETURN))
 
 #define SvPV_nomg(sv, len) SvPV_flags(sv, len, 0)
@@ -2159,6 +2171,8 @@ Returns the hash for C<sv> created by C<L</newSVpvn_share>>.
 #define sv_eq(sv1, sv2) sv_eq_flags(sv1, sv2, SV_GMAGIC)
 #define sv_cmp(sv1, sv2) sv_cmp_flags(sv1, sv2, SV_GMAGIC)
 #define sv_cmp_locale(sv1, sv2) sv_cmp_locale_flags(sv1, sv2, SV_GMAGIC)
+#define sv_numeq(sv1, sv2) sv_numeq_flags(sv1, sv2, SV_GMAGIC)
+#define sv_streq(sv1, sv2) sv_streq_flags(sv1, sv2, SV_GMAGIC)
 #define sv_collxfrm(sv, nxp) sv_collxfrm_flags(sv, nxp, SV_GMAGIC)
 #define sv_2bool(sv) sv_2bool_flags(sv, SV_GMAGIC)
 #define sv_2bool_nomg(sv) sv_2bool_flags(sv, 0)
@@ -2579,7 +2593,6 @@ Evaluates C<sv> more than once.  Sets C<len> to 0 if C<SvOOK(sv)> is false.
 /* The following two macros compute the necessary offsets for the above
  * trick and store them in SvANY for SvIV() (and friends) to use. */
 
-#ifdef PERL_CORE
 #  define SET_SVANY_FOR_BODYLESS_IV(sv) \
         SvANY(sv) =   (XPVIV*)((char*)&(sv->sv_u.svu_iv) \
                     - STRUCT_OFFSET(XPVIV, xiv_iv))
@@ -2587,7 +2600,6 @@ Evaluates C<sv> more than once.  Sets C<len> to 0 if C<SvOOK(sv)> is false.
 #  define SET_SVANY_FOR_BODYLESS_NV(sv) \
         SvANY(sv) =   (XPVNV*)((char*)&(sv->sv_u.svu_nv) \
                     - STRUCT_OFFSET(XPVNV, xnv_u.xnv_nv))
-#endif
 
 /*
  * ex: set ts=8 sts=4 sw=4 et:

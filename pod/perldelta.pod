@@ -5,15 +5,15 @@
 [ this is a template for a new perldelta file.  Any text flagged as XXX needs
 to be processed before release. ]
 
-perldelta - what is new for perl v5.35.7
+perldelta - what is new for perl v5.35.11
 
 =head1 DESCRIPTION
 
-This document describes differences between the 5.35.6 release and the 5.35.7
+This document describes differences between the 5.35.10 release and the 5.35.11
 release.
 
-If you are upgrading from an earlier release such as 5.35.5, first read
-L<perl5356delta>, which describes differences between 5.35.5 and 5.35.6.
+If you are upgrading from an earlier release such as 5.35.9, first read
+L<perl53510delta>, which describes differences between 5.35.9 and 5.35.10.
 
 =head1 Notice
 
@@ -346,8 +346,9 @@ well.
 
 =over 4
 
-=item * A new phase_name() interface provides access to the name
-for each interpreter phase (i.e., PL_phase value).
+=item *
+
+XXX
 
 =back
 
@@ -402,7 +403,7 @@ died, add a short obituary here.
 
 XXX Generate this with:
 
-  perl Porting/acknowledgements.pl v5.35.6..HEAD
+  perl Porting/acknowledgements.pl v5.35.10..HEAD
 
 =head1 Reporting Bugs
 
